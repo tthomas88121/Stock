@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+.env
+
+data/
+models/
+outputs/
+
+*.pkl
+*.joblib
+*.csv
+
+!outputs/
+!outputs/*.csv
+!stock_list.csv
