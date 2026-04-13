@@ -54,7 +54,7 @@ def download_recent_data(ticker: str) -> pd.DataFrame:
     try:
         df = yf.download(
             ticker,
-            period="3mo",
+            period="1y",
             auto_adjust=True,
             progress=False,
         )
@@ -126,7 +126,7 @@ def main(top_n: int = 10):
     stock_df = load_or_build_stock_list()
     if stock_df.empty:
         raise ValueError("stock_list is empty. Please check stock_list.csv or build_stock_list().")
-    
+
     print("CURRENT DIR:", Path().resolve())
     print("BASE_DIR:", BASE_DIR)
     print("MODEL_PATH:", MODEL_PATH)
@@ -163,7 +163,6 @@ def main(top_n: int = 10):
         try:
             feature_df = build_features_for_one_stock(full_df, row, include_targets=False)
         except TypeError:
-            # backward compatibility if old function version is still used
             feature_df = build_features_for_one_stock(full_df, row)
 
         if feature_df.empty:

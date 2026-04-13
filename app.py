@@ -42,13 +42,13 @@ def inject_css():
         }
 
         .block-container {
-            padding-top: 0.8rem !important;
+            padding-top: 0.5rem !important;
             padding-bottom: 1.2rem;
             max-width: 1450px;
         }
 
         .main-title {
-            font-size: 2.2rem;
+            font-size: 2.1rem;
             font-weight: 800;
             margin-bottom: 0.2rem;
             line-height: 1.2;
@@ -57,7 +57,7 @@ def inject_css():
         .subtitle {
             color: #6b7280;
             font-size: 0.98rem;
-            margin-bottom: 1.2rem;
+            margin-bottom: 1.0rem;
         }
 
         .hero-card {
@@ -72,13 +72,13 @@ def inject_css():
             padding: 0.9rem 1rem;
             border: 1px solid rgba(128,128,128,0.15);
             border-radius: 16px;
-            background: rgba(255,255,255,0.9);
+            background: rgba(255,255,255,0.92);
             margin-bottom: 0.9rem;
         }
 
         div[data-testid="stMetric"] {
-            background: rgba(255,255,255,0.85);
-            border: 1px solid rgba(128,128,128,0.13);
+            background: rgba(255,255,255,0.88);
+            border: 1px solid rgba(128,128,128,0.12);
             padding: 12px 14px;
             border-radius: 16px;
         }
@@ -90,8 +90,13 @@ def inject_css():
 
         .selected-badge {
             color: #0f766e;
-            font-weight: 600;
-            font-size: 0.9rem;
+            font-weight: 700;
+            font-size: 0.92rem;
+        }
+
+        .small-note {
+            color: #6b7280;
+            font-size: 0.88rem;
         }
         </style>
         """,
@@ -189,6 +194,7 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
             auto_adjust=True,
             progress=False,
         )
+
         if df is None or df.empty:
             return pd.DataFrame()
 
@@ -203,6 +209,19 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame()
+
+
+def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
+    local_df = load_local_price(code)
+
+    # if local missing or too short, use live
+    if local_df.empty or len(local_df) < 80:
+        live_df = fetch_live_price(ticker)
+        if not live_df.empty:
+            return live_df, "Yahoo Finance"
+        return local_df, "Local CSV"
+
+    return local_df, "Local CSV"
 
 
 def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFrame:
@@ -318,31 +337,37 @@ def probability_label(prob):
     return "看空 Strong Bearish"
 
 
+def init_state(available_codes, default_code):
+    if "selected_code" not in st.session_state:
+        st.session_state.selected_code = default_code
+
+    if st.session_state.selected_code not in available_codes:
+        st.session_state.selected_code = default_code
+
+    if "pinned_codes" not in st.session_state:
+        default_pins = ["2330", "2454", "2408", "6669"]
+        st.session_state.pinned_codes = [c for c in default_pins if c in available_codes]
+
+
+def add_pin(code: str, available_codes: list[str]):
+    if code in available_codes and code not in st.session_state.pinned_codes:
+        st.session_state.pinned_codes.append(code)
+
+
+def remove_pin(code: str):
+    if code in st.session_state.pinned_codes:
+        st.session_state.pinned_codes.remove(code)
+        if not st.session_state.pinned_codes:
+            st.session_state.pinned_codes = []
+
+
 def main():
     inject_css()
-
-    debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
 
     stock_df = load_stock_list()
     pred_df = load_predictions()
     top_df = load_top_candidates()
     failed_df = load_failed_symbols()
-
-    if debug_mode:
-        with st.expander("Debug Info", expanded=True):
-            st.write("BASE_DIR:", str(BASE_DIR))
-            st.write("PRICE_DIR:", str(PRICE_DIR))
-            st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
-            st.write("Resolved stock list path:", str(get_stock_list_path()))
-            st.write("Candidate stock list paths:", [str(p) for p in get_stock_list_candidates()])
-            st.write("Existing candidate paths:", [str(p) for p in get_stock_list_candidates() if Path(p).exists()])
-            st.write("TOP_PATH exists:", TOP_PATH.exists())
-            st.write("DAILY_ALL_PATH exists:", DAILY_ALL_PATH.exists())
-            st.write("FAILED_PATH exists:", FAILED_PATH.exists())
-            st.write("Stock rows loaded:", len(stock_df))
-            st.write("Prediction rows loaded:", len(pred_df))
-            st.write("Top candidates loaded:", len(top_df))
-            st.write("Failed symbols loaded:", len(failed_df))
 
     if stock_df.empty:
         st.error("找不到 stock_list.csv，或檔案為空。 | stock_list.csv not found or empty.")
@@ -350,6 +375,10 @@ def main():
         return
 
     industries = sorted(stock_df["industry"].dropna().astype(str).unique().tolist())
+    available_codes = stock_df["code"].astype(str).tolist()
+    default_code = "2330" if "2330" in available_codes else available_codes[0]
+
+    init_state(available_codes, default_code)
 
     st.markdown(
         '<div class="main-title">📈 AI 台股智慧儀表板 | AI Taiwan Stock Dashboard</div>',
@@ -362,23 +391,59 @@ def main():
     )
 
     st.sidebar.header("控制面板 | Control Panel")
+    debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
+
     st.sidebar.markdown("### 產業權重 | Industry Weights")
     industry_weights = {
         ind: st.sidebar.slider(ind, 0.0, 2.0, 1.0, 0.1)
         for ind in industries
     }
 
-    pinned_codes = ["2330", "2454", "2408", "6669"]
-    available_codes = stock_df["code"].astype(str).tolist()
-    pinned_codes = [c for c in pinned_codes if c in available_codes]
-    fallback_code = pinned_codes[0] if pinned_codes else available_codes[0]
-    default_code = "2330" if "2330" in available_codes else fallback_code
+    stock_df["label"] = (
+        stock_df["code"].astype(str)
+        + " - "
+        + stock_df["name"].astype(str)
+        + " ("
+        + stock_df["industry"].astype(str)
+        + ")"
+    )
+    code_to_label = dict(zip(stock_df["code"], stock_df["label"]))
 
-    if "selected_code" not in st.session_state:
-        st.session_state.selected_code = default_code
+    st.sidebar.markdown("### 自訂置頂股票 | Custom Pins")
+    pin_to_add = st.sidebar.selectbox(
+        "新增置頂股票 | Add Pin",
+        options=available_codes,
+        format_func=lambda x: code_to_label.get(x, x),
+        key="pin_selector",
+    )
 
-    if st.session_state.selected_code not in available_codes:
-        st.session_state.selected_code = default_code
+    c1, c2 = st.sidebar.columns(2)
+    with c1:
+        if st.button("加入置頂 | Add Pin", use_container_width=True):
+            add_pin(pin_to_add, available_codes)
+            st.session_state.selected_code = pin_to_add
+            st.rerun()
+
+    with c2:
+        if st.button("重設置頂 | Reset Pins", use_container_width=True):
+            default_pins = ["2330", "2454", "2408", "6669"]
+            st.session_state.pinned_codes = [c for c in default_pins if c in available_codes]
+            if st.session_state.pinned_codes:
+                st.session_state.selected_code = st.session_state.pinned_codes[0]
+            st.rerun()
+
+    if debug_mode:
+        with st.expander("Debug Info", expanded=True):
+            st.write("BASE_DIR:", str(BASE_DIR))
+            st.write("PRICE_DIR:", str(PRICE_DIR))
+            st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
+            st.write("Resolved stock list path:", str(get_stock_list_path()))
+            st.write("Selected code:", st.session_state.selected_code)
+            st.write("Pinned codes:", st.session_state.pinned_codes)
+            st.write("Stock rows loaded:", len(stock_df))
+            st.write("Prediction rows loaded:", len(pred_df))
+            st.write("Top candidates loaded:", len(top_df))
+            st.write("Failed symbols loaded:", len(failed_df))
 
     last_update_text = "N/A"
     if DAILY_ALL_PATH.exists():
@@ -390,8 +455,8 @@ def main():
     with hero_left:
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown("### 今日總覽 | Daily Overview")
-        st.write("使用本地歷史資料與每日預測結果，快速查看今日候選股票、個股訊號與技術指標。")
-        st.write("Use your local historical data and daily predictions to review top candidates, stock signals, and technical indicators.")
+        st.write("使用每日預測結果與即時股價資料，快速查看今日候選股票、個股訊號與技術指標。")
+        st.write("Use daily predictions and live price data to review candidates, stock signals, and technical indicators.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with hero_mid:
@@ -429,7 +494,13 @@ def main():
         st.info("目前沒有 top_candidates.csv 可顯示。 | No cached top candidates found.")
 
     st.markdown("### ⭐ 置頂個股 | Pinned Stocks")
-    cols = st.columns(max(len(pinned_codes), 1))
+
+    pinned_codes = [c for c in st.session_state.pinned_codes if c in available_codes]
+    if not pinned_codes:
+        pinned_codes = [default_code]
+        st.session_state.pinned_codes = pinned_codes
+
+    cols = st.columns(len(pinned_codes))
 
     for i, code in enumerate(pinned_codes):
         row = stock_df[stock_df["code"] == code].iloc[0]
@@ -439,8 +510,9 @@ def main():
         with cols[i]:
             st.markdown('<div class="soft-card">', unsafe_allow_html=True)
 
-            if st.button(f"{code} | {row['name']}", key=f"pin_{code}", use_container_width=True):
+            if st.button(f"{code} | {row['name']}", key=f"pin_btn_{code}", use_container_width=True):
                 st.session_state.selected_code = code
+                st.rerun()
 
             if pred_row is not None:
                 prob = float(pred_row["prob_up"]) if "prob_up" in pred_row else None
@@ -454,22 +526,22 @@ def main():
             else:
                 st.caption(f"產業 | Industry: {row['industry']}")
 
+            c_remove1, c_remove2 = st.columns([3, 2])
+            with c_remove2:
+                if st.button("取消置頂", key=f"remove_pin_{code}", use_container_width=True):
+                    remove_pin(code)
+                    if st.session_state.selected_code == code and st.session_state.pinned_codes:
+                        st.session_state.selected_code = st.session_state.pinned_codes[0]
+                    elif st.session_state.selected_code == code:
+                        st.session_state.selected_code = default_code
+                    st.rerun()
+
             if st.session_state.selected_code == code:
                 st.markdown('<div class="selected-badge">已選取 | Selected</div>', unsafe_allow_html=True)
 
             st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("### 🔎 個股分析 | Stock Analysis")
-
-    stock_df["label"] = (
-        stock_df["code"].astype(str)
-        + " - "
-        + stock_df["name"].astype(str)
-        + " ("
-        + stock_df["industry"].astype(str)
-        + ")"
-    )
-    code_to_label = dict(zip(stock_df["code"], stock_df["label"]))
 
     current_code = st.session_state.selected_code
     selected_code = st.selectbox(
@@ -482,6 +554,7 @@ def main():
 
     if selected_code != st.session_state.selected_code:
         st.session_state.selected_code = selected_code
+        st.rerun()
 
     code = st.session_state.selected_code
     row = stock_df[stock_df["code"] == code].iloc[0]
@@ -491,11 +564,7 @@ def main():
     if debug_mode:
         st.caption(f"Selected code: {code} | ticker: {ticker}")
 
-    price_df = load_local_price(code)
-    data_source = "Local CSV"
-    if price_df.empty:
-        price_df = fetch_live_price(ticker)
-        data_source = "Yahoo Finance"
+    price_df, data_source = get_best_price_data(code, ticker)
 
     if price_df.empty:
         st.error(f"無法讀取 {code} 的股價資料。 | Could not load price data for {code}.")
@@ -524,6 +593,13 @@ def main():
     st.markdown(
         f"#### {code} - {row['name']} | {row['industry']} | 訊號 Signal: {probability_label(prob_up)}"
     )
+
+    a1, a2 = st.columns([5, 1])
+    with a2:
+        if code not in st.session_state.pinned_codes:
+            if st.button("加入置頂股票", use_container_width=True):
+                add_pin(code, available_codes)
+                st.rerun()
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("收盤價 | Close", f"{latest['Close']:.2f}")
