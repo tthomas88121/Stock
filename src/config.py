@@ -7,7 +7,7 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 PRICE_DIR = RAW_DIR / "price_data"
 
-STOCK_LIST_PATH = RAW_DIR / "stock_list.csv"
+STOCK_LIST_PATH = BASE_DIR / "stock_list.csv"
 MERGED_DATASET_PATH = PROCESSED_DIR / "merged_dataset.csv"
 
 MODEL_PATH = BASE_DIR / "random_forest_model.pkl"
