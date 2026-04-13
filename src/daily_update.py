@@ -126,6 +126,13 @@ def main(top_n: int = 10):
     stock_df = load_or_build_stock_list()
     if stock_df.empty:
         raise ValueError("stock_list is empty. Please check stock_list.csv or build_stock_list().")
+    
+    print("CURRENT DIR:", Path().resolve())
+    print("BASE_DIR:", BASE_DIR)
+    print("MODEL_PATH:", MODEL_PATH)
+    print("REG_MODEL_PATH:", REG_MODEL_PATH)
+    print("MODEL EXISTS:", Path(MODEL_PATH).exists())
+    print("REG MODEL EXISTS:", Path(REG_MODEL_PATH).exists())
 
     clf = joblib.load(MODEL_PATH) if Path(MODEL_PATH).exists() else None
     reg = joblib.load(REG_MODEL_PATH) if Path(REG_MODEL_PATH).exists() else None
