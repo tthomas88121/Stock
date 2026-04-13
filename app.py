@@ -12,7 +12,7 @@ SRC_DIR = BASE_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
-from config import PRICE_DIR, STOCK_LIST_PATH
+from config import PRICE_DIR, STOCK_LIST_PATH, get_stock_list_path
 
 TOP_PATH = BASE_DIR / "outputs" / "top_candidates.csv"
 DAILY_ALL_PATH = BASE_DIR / "outputs" / "daily_all_predictions.csv"
@@ -29,8 +29,20 @@ def inject_css():
     st.markdown(
         """
         <style>
+        #MainMenu {display: none !important;}
+        header {display: none !important;}
+        footer {display: none !important;}
+        [data-testid="stHeader"] {display: none !important; height: 0 !important;}
+        [data-testid="stToolbar"] {display: none !important;}
+        [data-testid="stDecoration"] {display: none !important;}
+
+        html, body, .stApp {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+        }
+
         .block-container {
-            padding-top: 1.2rem;
+            padding-top: 0.8rem !important;
             padding-bottom: 1.2rem;
             max-width: 1450px;
         }
@@ -39,19 +51,13 @@ def inject_css():
             font-size: 2.2rem;
             font-weight: 800;
             margin-bottom: 0.2rem;
+            line-height: 1.2;
         }
 
         .subtitle {
             color: #6b7280;
             font-size: 0.98rem;
             margin-bottom: 1.2rem;
-        }
-
-        .section-title {
-            font-size: 1.15rem;
-            font-weight: 700;
-            margin-top: 0.4rem;
-            margin-bottom: 0.7rem;
         }
 
         .hero-card {
@@ -68,11 +74,6 @@ def inject_css():
             border-radius: 16px;
             background: rgba(255,255,255,0.9);
             margin-bottom: 0.9rem;
-        }
-
-        .mini-note {
-            color: #6b7280;
-            font-size: 0.9rem;
         }
 
         div[data-testid="stMetric"] {
@@ -98,16 +99,33 @@ def inject_css():
     )
 
 
+def get_stock_list_candidates():
+    return [
+        get_stock_list_path(),
+        STOCK_LIST_PATH,
+        BASE_DIR / "stock_list.csv",
+        BASE_DIR / "data" / "raw" / "stock_list.csv",
+    ]
+
+
 @st.cache_data(ttl=3600)
 def load_stock_list() -> pd.DataFrame:
-    if STOCK_LIST_PATH.exists():
-        try:
-            df = pd.read_csv(STOCK_LIST_PATH)
-            if not df.empty:
-                df["code"] = df["code"].astype(str)
-                return df
-        except Exception:
-            pass
+    seen = set()
+
+    for path in get_stock_list_candidates():
+        path = Path(path)
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+
+        if path.exists():
+            try:
+                df = pd.read_csv(path)
+                if not df.empty:
+                    df["code"] = df["code"].astype(str)
+                    return df
+            except Exception:
+                continue
     return pd.DataFrame()
 
 
@@ -303,18 +321,40 @@ def probability_label(prob):
 def main():
     inject_css()
 
+    debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
+
     stock_df = load_stock_list()
     pred_df = load_predictions()
     top_df = load_top_candidates()
     failed_df = load_failed_symbols()
 
+    if debug_mode:
+        with st.expander("Debug Info", expanded=True):
+            st.write("BASE_DIR:", str(BASE_DIR))
+            st.write("PRICE_DIR:", str(PRICE_DIR))
+            st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
+            st.write("Resolved stock list path:", str(get_stock_list_path()))
+            st.write("Candidate stock list paths:", [str(p) for p in get_stock_list_candidates()])
+            st.write("Existing candidate paths:", [str(p) for p in get_stock_list_candidates() if Path(p).exists()])
+            st.write("TOP_PATH exists:", TOP_PATH.exists())
+            st.write("DAILY_ALL_PATH exists:", DAILY_ALL_PATH.exists())
+            st.write("FAILED_PATH exists:", FAILED_PATH.exists())
+            st.write("Stock rows loaded:", len(stock_df))
+            st.write("Prediction rows loaded:", len(pred_df))
+            st.write("Top candidates loaded:", len(top_df))
+            st.write("Failed symbols loaded:", len(failed_df))
+
     if stock_df.empty:
         st.error("找不到 stock_list.csv，或檔案為空。 | stock_list.csv not found or empty.")
+        st.info("Please place stock_list.csv in repo root or data/raw/stock_list.csv")
         return
 
     industries = sorted(stock_df["industry"].dropna().astype(str).unique().tolist())
 
-    st.markdown('<div class="main-title">📈 AI 台股智慧儀表板 | AI Taiwan Stock Dashboard</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="main-title">📈 AI 台股智慧儀表板 | AI Taiwan Stock Dashboard</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         '<div class="subtitle">以機器學習預測方向與報酬，提供雙語介面、精簡專業的投資觀察面板。 | '
         'A bilingual dashboard for direction prediction, return forecasting, and cleaner stock analysis workflow.</div>',
@@ -324,16 +364,20 @@ def main():
     st.sidebar.header("控制面板 | Control Panel")
     st.sidebar.markdown("### 產業權重 | Industry Weights")
     industry_weights = {
-        ind: st.sidebar.slider(f"{ind}", 0.0, 2.0, 1.0, 0.1)
+        ind: st.sidebar.slider(ind, 0.0, 2.0, 1.0, 0.1)
         for ind in industries
     }
 
     pinned_codes = ["2330", "2454", "2408", "6669"]
     available_codes = stock_df["code"].astype(str).tolist()
     pinned_codes = [c for c in pinned_codes if c in available_codes]
-    default_code = pinned_codes[0] if pinned_codes else available_codes[0]
+    fallback_code = pinned_codes[0] if pinned_codes else available_codes[0]
+    default_code = "2330" if "2330" in available_codes else fallback_code
 
     if "selected_code" not in st.session_state:
+        st.session_state.selected_code = default_code
+
+    if st.session_state.selected_code not in available_codes:
         st.session_state.selected_code = default_code
 
     last_update_text = "N/A"
@@ -428,15 +472,12 @@ def main():
     code_to_label = dict(zip(stock_df["code"], stock_df["label"]))
 
     current_code = st.session_state.selected_code
-    if current_code not in available_codes:
-        current_code = default_code
-        st.session_state.selected_code = current_code
-
     selected_code = st.selectbox(
         "選擇股票 | Select Stock",
         options=available_codes,
         index=available_codes.index(current_code),
         format_func=lambda x: code_to_label.get(x, x),
+        key="stock_selector",
     )
 
     if selected_code != st.session_state.selected_code:
@@ -447,9 +488,14 @@ def main():
     ticker = row["ticker"]
     weight = industry_weights.get(str(row["industry"]), 1.0)
 
+    if debug_mode:
+        st.caption(f"Selected code: {code} | ticker: {ticker}")
+
     price_df = load_local_price(code)
+    data_source = "Local CSV"
     if price_df.empty:
         price_df = fetch_live_price(ticker)
+        data_source = "Yahoo Finance"
 
     if price_df.empty:
         st.error(f"無法讀取 {code} 的股價資料。 | Could not load price data for {code}.")
@@ -496,7 +542,7 @@ def main():
 
     st.caption(
         f"產業權重 | Industry Weight: {weight:.2f}   •   "
-        f"資料來源 | Data Source: {'Local CSV' if not load_local_price(code).empty else 'Yahoo Finance'}"
+        f"資料來源 | Data Source: {data_source}"
     )
 
     tab1, tab2, tab3, tab4 = st.tabs([

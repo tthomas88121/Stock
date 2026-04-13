@@ -7,7 +7,12 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 PRICE_DIR = RAW_DIR / "price_data"
 
+# Preferred path for deployment
 STOCK_LIST_PATH = BASE_DIR / "stock_list.csv"
+
+# Backward-compatible local fallback
+STOCK_LIST_FALLBACK_PATH = RAW_DIR / "stock_list.csv"
+
 MERGED_DATASET_PATH = PROCESSED_DIR / "merged_dataset.csv"
 
 MODEL_PATH = BASE_DIR / "random_forest_model.pkl"
@@ -41,6 +46,16 @@ INDUSTRY_SCORE_MAP = {
     "Communication": 0.70,
     "Other": 0.50,
 }
+
+
+def get_stock_list_path() -> Path:
+    """
+    Prefer repo-root stock_list.csv for deployment.
+    Fall back to data/raw/stock_list.csv for old local structure.
+    """
+    if STOCK_LIST_PATH.exists():
+        return STOCK_LIST_PATH
+    return STOCK_LIST_FALLBACK_PATH
 
 
 def ensure_directories():
