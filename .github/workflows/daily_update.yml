@@ -1,15 +1,20 @@
-name: Daily Stock Update
+name: Daily Taiwan Stock Update
 
 on:
-  schedule:
-    - cron: "30 13 * * *"
   workflow_dispatch:
+  schedule:
+    # 06:10 UTC = 14:10 Taiwan time
+    - cron: "10 6 * * 1-5"
 
 permissions:
   contents: write
 
+concurrency:
+  group: daily-stock-update
+  cancel-in-progress: false
+
 jobs:
-  daily-update:
+  update-predictions:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,6 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,19 +32,28 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install pandas numpy scikit-learn xgboost yfinance joblib streamlit plotly
 
       - name: Run daily update
         run: |
           python src/daily_update.py
 
-      - name: Commit updated outputs
+      - name: Show changed files
+        run: |
+          git status --short
+
+      - name: Commit updated prediction files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add outputs/
-          git diff --cached --quiet || git commit -m "Daily update outputs"
 
-      - name: Push changes
-        run: |
-          git push
+          git add outputs/daily_all_predictions.csv outputs/top_candidates.csv outputs/failed_symbols.csv src/data/ 2>/dev/null || true
+          git add outputs/daily_all_predictions.csv outputs/top_candidates.csv
+          if [ -f outputs/failed_symbols.csv ]; then git add outputs/failed_symbols.csv; fi
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Daily Taiwan stock update"
+            git push
+          fi
