@@ -35,6 +35,15 @@ FEATURE_COLUMNS = [
     "Price_Trend_5d",
     "Price_Trend_10d",
     "RSI_Trend",
+    "Return_1d",
+    "Return_3d",
+    "Return_5d",
+    "Return_10d",
+    "Vol_5d",
+    "Vol_10d",
+    "MA20_gap",
+    "MA60_gap",
+    "Volume_ratio",
 ]
 
 INDUSTRY_SCORE_MAP = {

@@ -274,6 +274,7 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
     if not all(col in df.columns for col in required):
         return pd.DataFrame()
 
+    # Existing features
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA60"] = df["Close"].rolling(60).mean()
@@ -297,6 +298,23 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
     df["RSI_Trend"] = df["RSI14"].diff()
 
     df["IndustryScore"] = industry_score
+
+    # New features
+    df["Return_1d"] = df["Close"].pct_change(1)
+    df["Return_3d"] = df["Close"].pct_change(3)
+    df["Return_5d"] = df["Close"].pct_change(5)
+    df["Return_10d"] = df["Close"].pct_change(10)
+
+    daily_ret = df["Close"].pct_change()
+    df["Vol_5d"] = daily_ret.rolling(5).std()
+    df["Vol_10d"] = daily_ret.rolling(10).std()
+
+    df["MA20_gap"] = (df["Close"] - df["MA20"]) / df["MA20"].replace(0, pd.NA)
+    df["MA60_gap"] = (df["Close"] - df["MA60"]) / df["MA60"].replace(0, pd.NA)
+
+    volume_ma20 = df["Volume"].rolling(20).mean()
+    df["Volume_ratio"] = df["Volume"] / volume_ma20.replace(0, pd.NA)
+
     df = df.replace([float("inf"), float("-inf")], pd.NA)
     df = df.dropna().reset_index(drop=True)
     return df
@@ -385,6 +403,72 @@ def signal_class(prob):
     if prob >= 0.45:
         return "signal-neutral"
     return "signal-bear"
+
+
+def trade_signal_info(prob_up, pred_return, close_price, ma20, ma60):
+    if pred_return is None or pd.isna(pred_return):
+        return {
+            "label": "NO DATA",
+            "class_name": "signal-neutral",
+            "reason": "No prediction data available."
+        }
+
+    trend_up = (
+        close_price is not None and ma20 is not None and ma60 is not None
+        and not pd.isna(close_price)
+        and not pd.isna(ma20)
+        and not pd.isna(ma60)
+        and close_price > ma20
+        and ma20 > ma60
+    )
+
+    above_ma20 = (
+        close_price is not None and ma20 is not None
+        and not pd.isna(close_price)
+        and not pd.isna(ma20)
+        and close_price > ma20
+    )
+
+    prob_ok = (prob_up is not None and not pd.isna(prob_up) and prob_up >= 0.55)
+
+    if pred_return >= 0.03 and trend_up and prob_ok:
+        return {
+            "label": "🔥 STRONG BUY",
+            "class_name": "signal-bull",
+            "reason": "Predicted return > 3%, trend is strong (Close > MA20 > MA60), and probability supports entry."
+        }
+
+    if pred_return >= 0.02 and trend_up:
+        return {
+            "label": "✅ BUY",
+            "class_name": "signal-bull",
+            "reason": "Predicted return > 2% and trend filter passes (Close > MA20 > MA60)."
+        }
+
+    if pred_return >= 0.015 and above_ma20:
+        return {
+            "label": "👀 WATCH",
+            "class_name": "signal-neutral",
+            "reason": "Predicted return is decent, but trend strength is not fully confirmed yet."
+        }
+
+    return {
+        "label": "⛔ NO BUY",
+        "class_name": "signal-bear",
+        "reason": "Predicted return is too low or trend filter does not pass."
+    }
+
+
+def trading_bias_text(pred_return):
+    if pred_return is None or pd.isna(pred_return):
+        return "No Signal"
+    if pred_return >= 0.03:
+        return "High-conviction setup"
+    if pred_return >= 0.02:
+        return "Valid buy setup"
+    if pred_return >= 0.015:
+        return "Watchlist candidate"
+    return "Weak setup"
 
 
 def init_state(available_codes, default_code):
@@ -645,14 +729,23 @@ def main():
         if "pred_price" in pred_row:
             pred_price = float(pred_row["pred_price"])
 
+    trade_signal = trade_signal_info(
+        prob_up=prob_up,
+        pred_return=pred_return,
+        close_price=latest["Close"],
+        ma20=latest["MA20"],
+        ma60=latest["MA60"],
+    )
+
     st.markdown(
         f"#### {code} - {row['name']} | {row['industry']}",
         unsafe_allow_html=False,
     )
     st.markdown(
-        f'<div class="{signal_class(prob_up)}">訊號 | Signal: {probability_label(prob_up)}</div>',
+        f'<div class="{trade_signal["class_name"]}">交易訊號 | Trading Signal: {trade_signal["label"]}</div>',
         unsafe_allow_html=True,
     )
+    st.caption(f"Signal Reason: {trade_signal['reason']}")
 
     _, pin_col = st.columns([5, 1])
     with pin_col:
@@ -671,10 +764,7 @@ def main():
     m5.metric("上漲機率 | Up Probability", fmt_pct(prob_up))
     m6.metric("預測報酬 | Predicted Return", fmt_pct(pred_return))
     m7.metric("預期收盤價 | Expected Next Close", fmt_num(pred_price))
-    m8.metric(
-        "加權分數 | Weighted Score",
-        fmt_pct(prob_up * weight if prob_up is not None else None),
-    )
+    m8.metric("Setup Quality", trading_bias_text(pred_return))
 
     st.caption(
         f"產業權重 | Industry Weight: {weight:.2f}   •   "
