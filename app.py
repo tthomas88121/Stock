@@ -12,7 +12,7 @@ SRC_DIR = BASE_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
-from config import PRICE_DIR, STOCK_LIST_PATH, get_stock_list_path
+from config import STOCK_LIST_PATH, get_stock_list_path
 
 TOP_PATH = BASE_DIR / "outputs" / "top_candidates.csv"
 DAILY_ALL_PATH = BASE_DIR / "outputs" / "daily_all_predictions.csv"
@@ -42,7 +42,7 @@ def inject_css():
         }
 
         .block-container {
-            padding-top: 0.5rem !important;
+            padding-top: 0.45rem !important;
             padding-bottom: 1.2rem;
             max-width: 1450px;
         }
@@ -57,7 +57,7 @@ def inject_css():
         .subtitle {
             color: #6b7280;
             font-size: 0.98rem;
-            margin-bottom: 1.0rem;
+            margin-bottom: 1rem;
         }
 
         .hero-card {
@@ -92,11 +92,6 @@ def inject_css():
             color: #0f766e;
             font-weight: 700;
             font-size: 0.92rem;
-        }
-
-        .small-note {
-            color: #6b7280;
-            font-size: 0.88rem;
         }
         </style>
         """,
@@ -170,29 +165,28 @@ def load_failed_symbols() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=3600)
-def load_local_price(code: str) -> pd.DataFrame:
-    path = PRICE_DIR / f"{code}.csv"
-    if not path.exists():
-        return pd.DataFrame()
-
-    try:
-        df = pd.read_csv(path)
-        if df.empty:
-            return pd.DataFrame()
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=600)
 def fetch_live_price(ticker: str) -> pd.DataFrame:
     try:
+        ticker = str(ticker).strip()
+
+        if ticker.isdigit():
+            ticker = f"{ticker}.TW"
+
+        if ticker.endswith(".TWO"):
+            pass
+        elif ticker.endswith(".TW"):
+            pass
+        elif ticker.replace(".", "").isdigit():
+            ticker = f"{ticker}.TW"
+
         df = yf.download(
             ticker,
             period="1y",
+            interval="1d",
             auto_adjust=True,
             progress=False,
+            threads=False,
         )
 
         if df is None or df.empty:
@@ -202,26 +196,18 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
             df.columns = df.columns.get_level_values(0)
 
         df = df.reset_index()
+
         required = ["Date", "Close", "Volume"]
         if not all(col in df.columns for col in required):
             return pd.DataFrame()
 
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).copy()
+
         return df
-    except Exception:
+    except Exception as e:
+        print("Yahoo fetch error:", e)
         return pd.DataFrame()
-
-
-def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
-    local_df = load_local_price(code)
-
-    # if local missing or too short, use live
-    if local_df.empty or len(local_df) < 80:
-        live_df = fetch_live_price(ticker)
-        if not live_df.empty:
-            return live_df, "Yahoo Finance"
-        return local_df, "Local CSV"
-
-    return local_df, "Local CSV"
 
 
 def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFrame:
@@ -435,7 +421,6 @@ def main():
     if debug_mode:
         with st.expander("Debug Info", expanded=True):
             st.write("BASE_DIR:", str(BASE_DIR))
-            st.write("PRICE_DIR:", str(PRICE_DIR))
             st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
             st.write("Resolved stock list path:", str(get_stock_list_path()))
             st.write("Selected code:", st.session_state.selected_code)
@@ -478,7 +463,7 @@ def main():
             "industry": "產業 Industry",
             "prob_up": "上漲機率 Up Prob",
             "pred_return": "預測報酬 Pred Return",
-            "pred_price": "預測價格 Pred Price",
+            "pred_price": "預期收盤價 Expected Next Close",
         }
         show_df = show_df.rename(columns=rename_map)
 
@@ -486,8 +471,8 @@ def main():
             show_df["上漲機率 Up Prob"] = (show_df["上漲機率 Up Prob"] * 100).round(2).astype(str) + "%"
         if "預測報酬 Pred Return" in show_df.columns:
             show_df["預測報酬 Pred Return"] = (show_df["預測報酬 Pred Return"] * 100).round(2).astype(str) + "%"
-        if "預測價格 Pred Price" in show_df.columns:
-            show_df["預測價格 Pred Price"] = show_df["預測價格 Pred Price"].round(2)
+        if "預期收盤價 Expected Next Close" in show_df.columns:
+            show_df["預期收盤價 Expected Next Close"] = show_df["預期收盤價 Expected Next Close"].round(2)
 
         st.dataframe(show_df.head(10), use_container_width=True, hide_index=True)
     else:
@@ -526,8 +511,8 @@ def main():
             else:
                 st.caption(f"產業 | Industry: {row['industry']}")
 
-            c_remove1, c_remove2 = st.columns([3, 2])
-            with c_remove2:
+            _, remove_col = st.columns([3, 2])
+            with remove_col:
                 if st.button("取消置頂", key=f"remove_pin_{code}", use_container_width=True):
                     remove_pin(code)
                     if st.session_state.selected_code == code and st.session_state.pinned_codes:
@@ -564,7 +549,8 @@ def main():
     if debug_mode:
         st.caption(f"Selected code: {code} | ticker: {ticker}")
 
-    price_df, data_source = get_best_price_data(code, ticker)
+    price_df = fetch_live_price(ticker)
+    data_source = "Yahoo Finance"
 
     if price_df.empty:
         st.error(f"無法讀取 {code} 的股價資料。 | Could not load price data for {code}.")
@@ -594,8 +580,8 @@ def main():
         f"#### {code} - {row['name']} | {row['industry']} | 訊號 Signal: {probability_label(prob_up)}"
     )
 
-    a1, a2 = st.columns([5, 1])
-    with a2:
+    _, pin_col = st.columns([5, 1])
+    with pin_col:
         if code not in st.session_state.pinned_codes:
             if st.button("加入置頂股票", use_container_width=True):
                 add_pin(code, available_codes)
@@ -610,7 +596,7 @@ def main():
     m5, m6, m7, m8 = st.columns(4)
     m5.metric("上漲機率 | Up Probability", fmt_pct(prob_up))
     m6.metric("預測報酬 | Predicted Return", fmt_pct(pred_return))
-    m7.metric("預測價格 | Predicted Next Price", fmt_num(pred_price))
+    m7.metric("預期收盤價 | Expected Next Close", fmt_num(pred_price))
     m8.metric(
         "加權分數 | Weighted Score",
         fmt_pct(prob_up * weight if prob_up is not None else None),

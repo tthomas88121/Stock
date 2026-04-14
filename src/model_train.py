@@ -1,4 +1,6 @@
 import time
+from pathlib import Path
+
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -11,50 +13,28 @@ from config import FEATURE_COLUMNS, MERGED_DATASET_PATH, MODEL_PATH, REG_MODEL_P
 def train_model():
     start_time = time.time()
 
+    if not Path(MERGED_DATASET_PATH).exists():
+        raise FileNotFoundError(f"Merged dataset not found: {MERGED_DATASET_PATH}")
+
     print("Loading merged dataset...")
     df = pd.read_csv(MERGED_DATASET_PATH)
-
-    # 清掉欄位前後空白，避免明明有欄位但抓不到
-    df.columns = df.columns.str.strip()
-
     print(f"Dataset shape: {df.shape}")
-    print("Columns:")
-    print(df.columns.tolist())
 
-    # 檢查必要特徵欄位
-    missing_features = [col for col in FEATURE_COLUMNS if col not in df.columns]
-    if missing_features:
-        raise ValueError(f"Missing feature columns: {missing_features}")
-
-    # 如果沒有 Target_Return，就自動建立
-    if "Target_Return" not in df.columns:
-        if "Close" not in df.columns:
-            raise ValueError(
-                "Target_Return not found, and Close column is also missing. "
-                "Cannot create Target_Return automatically."
-            )
-        print("Target_Return not found. Creating it from Close...")
-        df["Target_Return"] = df["Close"].pct_change().shift(-1)
-
-    # 如果沒有 Target，就根據 Target_Return 建立分類
-    if "Target" not in df.columns:
-        print("Target not found. Creating it from Target_Return...")
-        df["Target"] = (df["Target_Return"] > 0).astype(int)
+    required_cols = FEATURE_COLUMNS + ["Target", "Target_Return"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing columns in merged dataset: {missing_cols}")
 
     X = df[FEATURE_COLUMNS].copy()
     y_cls = df["Target"].copy()
     y_reg = df["Target_Return"].copy()
 
-    # 把 inf 變成 NA
     X = X.replace([float("inf"), float("-inf")], pd.NA)
-    y_reg = y_reg.replace([float("inf"), float("-inf")], pd.NA)
-
-    # 合併後一起 dropna，避免長度不一致
     merged = pd.concat([X, y_cls, y_reg], axis=1).dropna()
 
-    X = merged[FEATURE_COLUMNS]
-    y_cls = merged["Target"]
-    y_reg = merged["Target_Return"]
+    X = merged[FEATURE_COLUMNS].copy()
+    y_cls = merged["Target"].copy()
+    y_reg = merged["Target_Return"].clip(-0.10, 0.10).copy()
 
     print(f"Clean dataset shape: {X.shape}")
 
@@ -63,59 +43,54 @@ def train_model():
         X = X.tail(max_rows).copy()
         y_cls = y_cls.tail(max_rows).copy()
         y_reg = y_reg.tail(max_rows).copy()
-        print(f"Trimmed dataset to last {max_rows} rows")
+        print(f"Trimmed dataset shape: {X.shape}")
 
-    print("Splitting train/test...")
-    X_train, X_test, y_cls_train, y_cls_test, y_reg_train, y_reg_test = train_test_split(
-        X, y_cls, y_reg, test_size=0.2, shuffle=False
+    X_train_cls, X_test_cls, y_train_cls, y_test_cls = train_test_split(
+        X, y_cls, test_size=0.2, random_state=42, stratify=y_cls
+    )
+
+    X_train_reg, X_test_reg, y_train_reg, y_test_reg = train_test_split(
+        X, y_reg, test_size=0.2, random_state=42
     )
 
     print("Training classifier...")
     clf = RandomForestClassifier(
-        n_estimators=80,
-        max_depth=8,
-        n_jobs=-1,
+        n_estimators=300,
+        max_depth=10,
+        min_samples_leaf=5,
         random_state=42,
-        verbose=1,
+        n_jobs=-1,
+        class_weight="balanced_subsample",
     )
-    clf.fit(X_train, y_cls_train)
+    clf.fit(X_train_cls, y_train_cls)
 
     print("Training regressor...")
     reg = RandomForestRegressor(
-        n_estimators=80,
-        max_depth=8,
-        n_jobs=-1,
+        n_estimators=300,
+        max_depth=10,
+        min_samples_leaf=5,
         random_state=42,
-        verbose=1,
+        n_jobs=-1,
     )
-    reg.fit(X_train, y_reg_train)
+    reg.fit(X_train_reg, y_train_reg)
 
     print("Evaluating classifier...")
-    pred_cls = clf.predict(X_test)
-    acc = accuracy_score(y_cls_test, pred_cls)
-
-    print("\n=== Classification Result ===")
-    print(f"Accuracy: {acc:.4f}")
-    print("\nClassification Report:")
-    print(classification_report(y_cls_test, pred_cls))
+    y_pred_cls = clf.predict(X_test_cls)
+    acc = accuracy_score(y_test_cls, y_pred_cls)
+    print(f"Classifier Accuracy: {acc:.4f}")
+    print(classification_report(y_test_cls, y_pred_cls))
 
     print("Evaluating regressor...")
-    pred_reg = reg.predict(X_test)
-    mae = mean_absolute_error(y_reg_test, pred_reg)
-
-    print("\n=== Regression Result ===")
-    print(f"MAE (next-day return): {mae:.6f}")
+    y_pred_reg = reg.predict(X_test_reg)
+    mae = mean_absolute_error(y_test_reg, y_pred_reg)
+    print(f"Regressor MAE: {mae:.6f}")
 
     joblib.dump(clf, MODEL_PATH)
     joblib.dump(reg, REG_MODEL_PATH)
 
-    print(f"Saved classifier to: {MODEL_PATH}")
-    print(f"Saved regressor to: {REG_MODEL_PATH}")
-
-    elapsed = time.time() - start_time
-    print(f"Total training time: {elapsed:.2f} seconds")
-
-    return clf, reg
+    print(f"Saved classifier: {MODEL_PATH}")
+    print(f"Saved regressor: {REG_MODEL_PATH}")
+    print(f"Total training time: {time.time() - start_time:.2f} sec")
 
 
 if __name__ == "__main__":

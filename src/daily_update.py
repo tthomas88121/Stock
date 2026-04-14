@@ -50,13 +50,24 @@ def load_or_build_stock_list() -> pd.DataFrame:
     return df
 
 
+def normalize_ticker(ticker: str) -> str:
+    ticker = str(ticker).strip()
+    if ticker.isdigit():
+        return f"{ticker}.TW"
+    return ticker
+
+
 def download_recent_data(ticker: str) -> pd.DataFrame:
     try:
+        ticker = normalize_ticker(ticker)
+
         df = yf.download(
             ticker,
             period="1y",
+            interval="1d",
             auto_adjust=True,
             progress=False,
+            threads=False,
         )
 
         if df is None or df.empty:
@@ -127,13 +138,6 @@ def main(top_n: int = 10):
     if stock_df.empty:
         raise ValueError("stock_list is empty. Please check stock_list.csv or build_stock_list().")
 
-    print("CURRENT DIR:", Path().resolve())
-    print("BASE_DIR:", BASE_DIR)
-    print("MODEL_PATH:", MODEL_PATH)
-    print("REG_MODEL_PATH:", REG_MODEL_PATH)
-    print("MODEL EXISTS:", Path(MODEL_PATH).exists())
-    print("REG MODEL EXISTS:", Path(REG_MODEL_PATH).exists())
-
     clf = joblib.load(MODEL_PATH) if Path(MODEL_PATH).exists() else None
     reg = joblib.load(REG_MODEL_PATH) if Path(REG_MODEL_PATH).exists() else None
 
@@ -175,7 +179,10 @@ def main(top_n: int = 10):
             X = pd.DataFrame([latest[FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
 
             prob_up = float(clf.predict_proba(X)[0][1])
-            pred_return = float(reg.predict(X)[0])
+
+            raw_pred_return = float(reg.predict(X)[0])
+            pred_return = max(min(raw_pred_return, 0.10), -0.10)
+
             pred_price = float(latest["Close"] * (1 + pred_return))
         except Exception as e:
             failed.append(
@@ -194,7 +201,7 @@ def main(top_n: int = 10):
                 "name": name,
                 "market": market,
                 "industry": industry,
-                "ticker": ticker,
+                "ticker": normalize_ticker(ticker),
                 "Close": float(latest["Close"]),
                 "prob_up": prob_up,
                 "pred_return": pred_return,

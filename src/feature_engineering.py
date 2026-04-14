@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+
 from config import (
     PRICE_DIR,
     PROCESSED_DIR,
@@ -34,10 +35,11 @@ def build_features_for_one_stock(
     required_input_cols = ["Date", "Close", "Volume"]
     missing_input_cols = [col for col in required_input_cols if col not in price_df.columns]
     if missing_input_cols:
-        print(f"[WARN] Missing input columns: {missing_input_cols}")
         return pd.DataFrame()
 
     df = price_df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"]).copy()
 
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
@@ -59,11 +61,15 @@ def build_features_for_one_stock(
     df["IndustryScore"] = industry_score
 
     if include_targets:
-        # training only
+        # next-day direction
         df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
-        df["Target_Return"] = (df["Close"].shift(-1) - df["Close"]) / df["Close"]
 
-    df["code"] = meta_row["code"]
+        # next-day return, clipped to reduce extreme outliers
+        df["Target_Return"] = (
+            (df["Close"].shift(-1) - df["Close"]) / df["Close"]
+        ).clip(-0.10, 0.10)
+
+    df["code"] = str(meta_row["code"])
     df["name"] = meta_row["name"]
     df["market"] = meta_row["market"]
     df["industry"] = industry
@@ -94,7 +100,6 @@ def build_features_for_one_stock(
 
     missing_required_cols = [col for col in required_cols if col not in df.columns]
     if missing_required_cols:
-        print(f"[WARN] Missing required feature columns: {missing_required_cols}")
         return pd.DataFrame()
 
     df = df.dropna(subset=required_cols).reset_index(drop=True)
