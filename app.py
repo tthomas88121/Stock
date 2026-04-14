@@ -12,11 +12,10 @@ SRC_DIR = BASE_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
-from config import STOCK_LIST_PATH, get_stock_list_path
+from config import PRICE_DIR, STOCK_LIST_PATH, get_stock_list_path
 
 TOP_PATH = BASE_DIR / "outputs" / "top_candidates.csv"
 DAILY_ALL_PATH = BASE_DIR / "outputs" / "daily_all_predictions.csv"
-FAILED_PATH = BASE_DIR / "outputs" / "failed_symbols.csv"
 
 st.set_page_config(
     page_title="AI 台股智慧儀表板 | AI Taiwan Stock Dashboard",
@@ -76,6 +75,32 @@ def inject_css():
             margin-bottom: 0.9rem;
         }
 
+        .explain-card {
+            padding: 1rem 1.1rem;
+            border: 1px solid rgba(128,128,128,0.15);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.94);
+            margin-top: 0.8rem;
+        }
+
+        .signal-bull {
+            color: #15803d;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
+        .signal-neutral {
+            color: #b45309;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
+        .signal-bear {
+            color: #b91c1c;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
         div[data-testid="stMetric"] {
             background: rgba(255,255,255,0.88);
             border: 1px solid rgba(128,128,128,0.12);
@@ -92,6 +117,11 @@ def inject_css():
             color: #0f766e;
             font-weight: 700;
             font-size: 0.92rem;
+        }
+
+        .small-muted {
+            color: #6b7280;
+            font-size: 0.9rem;
         }
         </style>
         """,
@@ -155,14 +185,26 @@ def load_top_candidates() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=900)
-def load_failed_symbols() -> pd.DataFrame:
-    if FAILED_PATH.exists():
-        try:
-            return pd.read_csv(FAILED_PATH)
-        except Exception:
-            pass
-    return pd.DataFrame()
+@st.cache_data(ttl=3600)
+def load_local_price(code: str) -> pd.DataFrame:
+    path = PRICE_DIR / f"{code}.csv"
+    if not path.exists():
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(path)
+        if df.empty:
+            return pd.DataFrame()
+
+        required = ["Date", "Close", "Volume"]
+        if not all(col in df.columns for col in required):
+            return pd.DataFrame()
+
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).copy()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=600)
@@ -173,12 +215,9 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
         if ticker.isdigit():
             ticker = f"{ticker}.TW"
 
-        if ticker.endswith(".TWO"):
-            pass
-        elif ticker.endswith(".TW"):
-            pass
-        elif ticker.replace(".", "").isdigit():
-            ticker = f"{ticker}.TW"
+        if not (ticker.endswith(".TW") or ticker.endswith(".TWO")):
+            if ticker.replace(".", "").isdigit():
+                ticker = f"{ticker}.TW"
 
         df = yf.download(
             ticker,
@@ -208,6 +247,22 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
     except Exception as e:
         print("Yahoo fetch error:", e)
         return pd.DataFrame()
+
+
+def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
+    local_df = load_local_price(code)
+
+    if not local_df.empty and len(local_df) >= 80:
+        return local_df, "Cached CSV"
+
+    live_df = fetch_live_price(ticker)
+    if not live_df.empty and len(live_df) >= 80:
+        return live_df, "Yahoo Finance"
+
+    if not local_df.empty:
+        return local_df, "Cached CSV (fallback)"
+
+    return pd.DataFrame(), "No Data"
 
 
 def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFrame:
@@ -287,7 +342,6 @@ def plot_growth(df: pd.DataFrame):
 def plot_rsi(df: pd.DataFrame):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["Date"], y=df["RSI14"], name="RSI"))
-    fig.add_trace(go.Scatter(x=df["Date"], y=df["RSI_Trend"], name="RSI 趨勢 RSI Trend"))
     fig.update_layout(
         height=320,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -323,6 +377,16 @@ def probability_label(prob):
     return "看空 Strong Bearish"
 
 
+def signal_class(prob):
+    if prob is None or pd.isna(prob):
+        return "signal-neutral"
+    if prob >= 0.55:
+        return "signal-bull"
+    if prob >= 0.45:
+        return "signal-neutral"
+    return "signal-bear"
+
+
 def init_state(available_codes, default_code):
     if "selected_code" not in st.session_state:
         st.session_state.selected_code = default_code
@@ -353,7 +417,6 @@ def main():
     stock_df = load_stock_list()
     pred_df = load_predictions()
     top_df = load_top_candidates()
-    failed_df = load_failed_symbols()
 
     if stock_df.empty:
         st.error("找不到 stock_list.csv，或檔案為空。 | stock_list.csv not found or empty.")
@@ -421,6 +484,7 @@ def main():
     if debug_mode:
         with st.expander("Debug Info", expanded=True):
             st.write("BASE_DIR:", str(BASE_DIR))
+            st.write("PRICE_DIR:", str(PRICE_DIR))
             st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
             st.write("Resolved stock list path:", str(get_stock_list_path()))
             st.write("Selected code:", st.session_state.selected_code)
@@ -428,7 +492,6 @@ def main():
             st.write("Stock rows loaded:", len(stock_df))
             st.write("Prediction rows loaded:", len(pred_df))
             st.write("Top candidates loaded:", len(top_df))
-            st.write("Failed symbols loaded:", len(failed_df))
 
     last_update_text = "N/A"
     if DAILY_ALL_PATH.exists():
@@ -440,8 +503,8 @@ def main():
     with hero_left:
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown("### 今日總覽 | Daily Overview")
-        st.write("使用每日預測結果與即時股價資料，快速查看今日候選股票、個股訊號與技術指標。")
-        st.write("Use daily predictions and live price data to review candidates, stock signals, and technical indicators.")
+        st.write("使用每日預測結果與穩定股價來源，快速查看今日候選股票、個股訊號與技術指標。")
+        st.write("Use daily predictions and stable price sources to review candidates, stock signals, and technical indicators.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with hero_mid:
@@ -450,7 +513,7 @@ def main():
 
     with hero_right:
         st.metric("更新時間 | Last Update", last_update_text)
-        st.metric("失敗筆數 | Failed", len(failed_df) if not failed_df.empty else 0)
+        st.metric("置頂數量 | Pinned", len(st.session_state.pinned_codes))
 
     st.markdown("### 🔥 今日推薦 | Top Picks")
     if not top_df.empty:
@@ -507,7 +570,10 @@ def main():
                 st.metric("上漲機率 | Up Prob", fmt_pct(prob))
                 st.metric("加權分數 | Weighted", fmt_pct(weighted))
                 st.caption(f"預測報酬 | Pred Return: {fmt_pct(pred_ret)}")
-                st.caption(f"訊號 | Signal: {probability_label(prob)}")
+                st.markdown(
+                    f'<div class="{signal_class(prob)}">訊號 | Signal: {probability_label(prob)}</div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 st.caption(f"產業 | Industry: {row['industry']}")
 
@@ -549,8 +615,11 @@ def main():
     if debug_mode:
         st.caption(f"Selected code: {code} | ticker: {ticker}")
 
-    price_df = fetch_live_price(ticker)
-    data_source = "Yahoo Finance"
+    price_df, data_source = get_best_price_data(code, ticker)
+
+    if debug_mode:
+        st.caption(f"Data source used: {data_source}")
+        st.caption(f"Price rows: {len(price_df) if not price_df.empty else 0}")
 
     if price_df.empty:
         st.error(f"無法讀取 {code} 的股價資料。 | Could not load price data for {code}.")
@@ -577,7 +646,12 @@ def main():
             pred_price = float(pred_row["pred_price"])
 
     st.markdown(
-        f"#### {code} - {row['name']} | {row['industry']} | 訊號 Signal: {probability_label(prob_up)}"
+        f"#### {code} - {row['name']} | {row['industry']}",
+        unsafe_allow_html=False,
+    )
+    st.markdown(
+        f'<div class="{signal_class(prob_up)}">訊號 | Signal: {probability_label(prob_up)}</div>',
+        unsafe_allow_html=True,
     )
 
     _, pin_col = st.columns([5, 1])
@@ -611,7 +685,7 @@ def main():
         "價格圖表 | Price",
         "成長動能 | Growth",
         "RSI 分析 | RSI",
-        "原始資料 | Data",
+        "指標解釋 | Indicator Guide",
     ])
 
     with tab1:
@@ -624,17 +698,21 @@ def main():
         st.plotly_chart(plot_rsi(feature_df), use_container_width=True)
 
     with tab4:
-        show_cols = [
-            c for c in [
-                "Date", "Close", "MA20", "MA60", "RSI14",
-                "Price_Trend_5d", "Price_Trend_10d", "RSI_Trend"
-            ] if c in feature_df.columns
-        ]
-        st.dataframe(feature_df[show_cols].tail(30), use_container_width=True, hide_index=True)
+        st.markdown('<div class="explain-card">', unsafe_allow_html=True)
+        st.markdown("#### 技術指標說明 | Indicator Guide")
 
-    if not failed_df.empty:
-        with st.expander("失敗股票清單 | Failed Symbols"):
-            st.dataframe(failed_df, use_container_width=True, hide_index=True)
+        st.markdown("**MA20（20日均線）**")
+        st.write("代表最近 20 個交易日平均收盤價，通常用來看短中期趨勢。股價站上 MA20，通常表示短期偏強。")
+
+        st.markdown("**MA60（60日均線）**")
+        st.write("代表最近 60 個交易日平均收盤價，通常用來看中期趨勢。股價站上 MA60，通常代表中期趨勢較穩。")
+
+        st.markdown("**RSI（Relative Strength Index）**")
+        st.write("用來衡量近期買賣力道。一般來說：RSI > 70 可能偏熱，RSI < 30 可能偏弱或接近超賣。")
+
+        st.markdown("**怎麼一起看**")
+        st.write("如果股價在 MA20 和 MA60 之上，且 RSI 在 50 以上，通常代表趨勢偏強；如果跌破均線且 RSI 偏低，通常代表動能較弱。")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
