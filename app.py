@@ -29,6 +29,12 @@ st.set_page_config(
 )
 
 
+def normalize_code(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).replace(".0", "").strip()
+
+
 def inject_css():
     st.markdown(
         """
@@ -157,7 +163,7 @@ def load_stock_list() -> pd.DataFrame:
             try:
                 df = pd.read_csv(path)
                 if not df.empty:
-                    df["code"] = df["code"].astype(str)
+                    df["code"] = df["code"].apply(normalize_code)
                     return df
             except Exception:
                 continue
@@ -169,11 +175,11 @@ def load_predictions() -> pd.DataFrame:
     if DAILY_ALL_PATH.exists():
         try:
             df = pd.read_csv(DAILY_ALL_PATH)
-            if not df.empty:
-                df["code"] = df["code"].astype(str)
+            if not df.empty and "code" in df.columns:
+                df["code"] = df["code"].apply(normalize_code)
                 return df
-        except Exception:
-            pass
+        except Exception as e:
+            print("load_predictions error:", e)
     return pd.DataFrame()
 
 
@@ -182,16 +188,17 @@ def load_top_candidates() -> pd.DataFrame:
     if TOP_PATH.exists():
         try:
             df = pd.read_csv(TOP_PATH)
-            if not df.empty:
-                df["code"] = df["code"].astype(str)
+            if not df.empty and "code" in df.columns:
+                df["code"] = df["code"].apply(normalize_code)
                 return df
-        except Exception:
-            pass
+        except Exception as e:
+            print("load_top_candidates error:", e)
     return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
 def load_local_price(code: str) -> pd.DataFrame:
+    code = normalize_code(code)
     path = PRICE_DIR / f"{code}.csv"
     if not path.exists():
         return pd.DataFrame()
@@ -326,7 +333,12 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
 def get_prediction_row(pred_df: pd.DataFrame, code: str):
     if pred_df.empty or "code" not in pred_df.columns:
         return None
-    row = pred_df[pred_df["code"] == str(code)]
+
+    code = normalize_code(code)
+    temp_df = pred_df.copy()
+    temp_df["code"] = temp_df["code"].apply(normalize_code)
+
+    row = temp_df[temp_df["code"] == code]
     if row.empty:
         return None
     return row.iloc[0]
@@ -585,6 +597,8 @@ def main():
             st.write("Stock rows loaded:", len(stock_df))
             st.write("Prediction rows loaded:", len(pred_df))
             st.write("Top candidates loaded:", len(top_df))
+            if not pred_df.empty and "code" in pred_df.columns:
+                st.write("Prediction codes sample:", pred_df["code"].head(20).tolist())
 
     last_update_text = "N/A"
     if DAILY_ALL_PATH.exists():

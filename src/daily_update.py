@@ -23,6 +23,12 @@ DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
 FAILED_PATH = OUTPUT_DIR / "failed_symbols.csv"
 
 
+def normalize_code(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).replace(".0", "").strip()
+
+
 def load_or_build_stock_list() -> pd.DataFrame:
     stock_list_path = get_stock_list_path()
 
@@ -30,7 +36,7 @@ def load_or_build_stock_list() -> pd.DataFrame:
         try:
             df = pd.read_csv(stock_list_path)
             if not df.empty:
-                df["code"] = df["code"].astype(str)
+                df["code"] = df["code"].apply(normalize_code)
                 return df
         except Exception:
             pass
@@ -39,14 +45,14 @@ def load_or_build_stock_list() -> pd.DataFrame:
         try:
             df = pd.read_csv(STOCK_LIST_PATH)
             if not df.empty:
-                df["code"] = df["code"].astype(str)
+                df["code"] = df["code"].apply(normalize_code)
                 return df
         except Exception:
             pass
 
     df = build_stock_list()
     if not df.empty:
-        df["code"] = df["code"].astype(str)
+        df["code"] = df["code"].apply(normalize_code)
     return df
 
 
@@ -97,6 +103,8 @@ def download_recent_data(ticker: str) -> pd.DataFrame:
 
 
 def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFrame:
+    code = normalize_code(code)
+
     PRICE_DIR.mkdir(parents=True, exist_ok=True)
     path = PRICE_DIR / f"{code}.csv"
 
@@ -147,7 +155,12 @@ def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series) -
     if not all(col in df.columns for col in required):
         return pd.DataFrame()
 
-    industry_score = 1.0
+    # Use real industry score if available; otherwise fallback to 1.0
+    industry_score = stock_row.get("IndustryScore", stock_row.get("industry_score", 1.0))
+    try:
+        industry_score = float(industry_score)
+    except Exception:
+        industry_score = 1.0
 
     # Existing features
     df["MA5"] = df["Close"].rolling(5).mean()
@@ -246,7 +259,7 @@ def main(top_n: int = 10):
     total = len(stock_df)
 
     for idx, (_, row) in enumerate(stock_df.iterrows(), start=1):
-        code = str(row["code"])
+        code = normalize_code(row["code"])
         ticker = row["ticker"]
         name = row.get("name", "")
         market = row.get("market", "")
@@ -309,7 +322,7 @@ def main(top_n: int = 10):
         results.append(
             {
                 "Date": pd.to_datetime(latest["Date"]).strftime("%Y-%m-%d"),
-                "code": code,
+                "code": normalize_code(code),
                 "name": name,
                 "market": market,
                 "industry": industry,
@@ -330,7 +343,8 @@ def main(top_n: int = 10):
     failed_df = pd.DataFrame(failed)
 
     if not result_df.empty:
-        # better sort for top candidates
+        result_df["code"] = result_df["code"].apply(normalize_code)
+
         result_df["signal_rank"] = result_df["signal"].map(
             {
                 "STRONG BUY": 3,
@@ -351,6 +365,7 @@ def main(top_n: int = 10):
         result_df.head(top_n).to_csv(TOP_CANDIDATES_PATH, index=False, encoding="utf-8-sig")
 
     if not failed_df.empty:
+        failed_df["code"] = failed_df["code"].apply(normalize_code)
         failed_df.to_csv(FAILED_PATH, index=False, encoding="utf-8-sig")
     elif FAILED_PATH.exists():
         FAILED_PATH.unlink()
