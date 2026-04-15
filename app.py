@@ -7,15 +7,20 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-BASE_DIR = Path(__file__).resolve().parent
-SRC_DIR = BASE_DIR / "src"
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
-from config import PRICE_DIR, STOCK_LIST_PATH, get_stock_list_path
+from config import (
+    PRICE_DIR,
+    STOCK_LIST_PATH,
+    get_stock_list_path,
+    OUTPUT_DIR,
+)
 
-TOP_PATH = BASE_DIR / "outputs" / "top_candidates.csv"
-DAILY_ALL_PATH = BASE_DIR / "outputs" / "daily_all_predictions.csv"
+TOP_PATH = OUTPUT_DIR / "top_candidates.csv"
+DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
 
 st.set_page_config(
     page_title="AI 台股智慧儀表板 | AI Taiwan Stock Dashboard",
@@ -133,8 +138,8 @@ def get_stock_list_candidates():
     return [
         get_stock_list_path(),
         STOCK_LIST_PATH,
-        BASE_DIR / "stock_list.csv",
-        BASE_DIR / "data" / "raw" / "stock_list.csv",
+        ROOT_DIR / "stock_list.csv",
+        ROOT_DIR / "data" / "raw" / "stock_list.csv",
     ]
 
 
@@ -274,7 +279,6 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
     if not all(col in df.columns for col in required):
         return pd.DataFrame()
 
-    # Existing features
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA60"] = df["Close"].rolling(60).mean()
@@ -299,7 +303,6 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
 
     df["IndustryScore"] = industry_score
 
-    # New features
     df["Return_1d"] = df["Close"].pct_change(1)
     df["Return_3d"] = df["Close"].pct_change(3)
     df["Return_5d"] = df["Close"].pct_change(5)
@@ -567,8 +570,14 @@ def main():
 
     if debug_mode:
         with st.expander("Debug Info", expanded=True):
-            st.write("BASE_DIR:", str(BASE_DIR))
+            st.write("ROOT_DIR:", str(ROOT_DIR))
+            st.write("SRC_DIR:", str(SRC_DIR))
             st.write("PRICE_DIR:", str(PRICE_DIR))
+            st.write("OUTPUT_DIR:", str(OUTPUT_DIR))
+            st.write("TOP_PATH:", str(TOP_PATH))
+            st.write("DAILY_ALL_PATH:", str(DAILY_ALL_PATH))
+            st.write("TOP_PATH exists:", TOP_PATH.exists())
+            st.write("DAILY_ALL_PATH exists:", DAILY_ALL_PATH.exists())
             st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
             st.write("Resolved stock list path:", str(get_stock_list_path()))
             st.write("Selected code:", st.session_state.selected_code)
@@ -601,13 +610,14 @@ def main():
 
     st.markdown("### 🔥 今日推薦 | Top Picks")
     if not top_df.empty:
-        show_cols = [c for c in ["code", "name", "industry", "prob_up", "pred_return", "pred_price"] if c in top_df.columns]
+        show_cols = [c for c in ["code", "name", "industry", "signal", "prob_up", "pred_return", "pred_price"] if c in top_df.columns]
         show_df = top_df[show_cols].copy()
 
         rename_map = {
             "code": "代碼 Code",
             "name": "名稱 Name",
             "industry": "產業 Industry",
+            "signal": "交易訊號 Signal",
             "prob_up": "上漲機率 Up Prob",
             "pred_return": "預測報酬 Pred Return",
             "pred_price": "預期收盤價 Expected Next Close",
@@ -650,12 +660,13 @@ def main():
                 prob = float(pred_row["prob_up"]) if "prob_up" in pred_row else None
                 pred_ret = float(pred_row["pred_return"]) if "pred_return" in pred_row else None
                 weighted = prob * weight if prob is not None else None
+                signal = pred_row["signal"] if "signal" in pred_row else probability_label(prob)
 
                 st.metric("上漲機率 | Up Prob", fmt_pct(prob))
                 st.metric("加權分數 | Weighted", fmt_pct(weighted))
                 st.caption(f"預測報酬 | Pred Return: {fmt_pct(pred_ret)}")
                 st.markdown(
-                    f'<div class="{signal_class(prob)}">訊號 | Signal: {probability_label(prob)}</div>',
+                    f'<div class="{signal_class(prob)}">訊號 | Signal: {signal}</div>',
                     unsafe_allow_html=True,
                 )
             else:

@@ -1,25 +1,20 @@
 from pathlib import Path
 
+# config.py is inside src/, so parent.parent = project root
 BASE_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = BASE_DIR / "src"
 
 DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
-PRICE_DIR = RAW_DIR / "price_data"
+PRICE_DIR = DATA_DIR / "price"
+OUTPUT_DIR = BASE_DIR / "outputs"
 
-# Preferred for deployment
 STOCK_LIST_PATH = BASE_DIR / "stock_list.csv"
-
-# Fallback for older local structure
-STOCK_LIST_FALLBACK_PATH = RAW_DIR / "stock_list.csv"
-
-MERGED_DATASET_PATH = PROCESSED_DIR / "merged_dataset.csv"
+MERGED_DATASET_PATH = DATA_DIR / "merged_dataset.csv"
 
 MODEL_PATH = BASE_DIR / "random_forest_model.pkl"
 REG_MODEL_PATH = BASE_DIR / "random_forest_regressor.pkl"
 
-DOWNLOAD_PERIOD = "2y"
-MAX_STOCKS = None
 
 FEATURE_COLUMNS = [
     "MA5",
@@ -46,24 +41,21 @@ FEATURE_COLUMNS = [
     "Volume_ratio",
 ]
 
-INDUSTRY_SCORE_MAP = {
-    "Semiconductor": 0.90,
-    "Memory": 0.95,
-    "AI Server": 1.00,
-    "Electronics": 0.75,
-    "Computer": 0.70,
-    "Communication": 0.70,
-    "Other": 0.50,
-}
+
+def ensure_directories():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    PRICE_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_stock_list_path() -> Path:
-    if STOCK_LIST_PATH.exists():
-        return STOCK_LIST_PATH
-    return STOCK_LIST_FALLBACK_PATH
-
-
-def ensure_directories():
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    PRICE_DIR.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        BASE_DIR / "stock_list.csv",
+        RAW_DIR / "stock_list.csv",
+        STOCK_LIST_PATH,
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
