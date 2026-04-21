@@ -22,6 +22,10 @@ from config import (
 TOP_PATH = OUTPUT_DIR / "top_candidates.csv"
 DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
 
+# NEW: prediction history / evaluation files
+PREDICTION_HISTORY_PATH = ROOT_DIR / "data" / "predictions_history.csv"
+EVALUATION_PATH = ROOT_DIR / "data" / "prediction_evaluation.csv"
+
 st.set_page_config(
     page_title="AI 台股智慧儀表板 | AI Taiwan Stock Dashboard",
     page_icon="📈",
@@ -196,6 +200,46 @@ def load_top_candidates() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=900)
+def load_prediction_history() -> pd.DataFrame:
+    if PREDICTION_HISTORY_PATH.exists():
+        try:
+            df = pd.read_csv(PREDICTION_HISTORY_PATH)
+            if not df.empty:
+                if "symbol" in df.columns:
+                    df["code"] = df["symbol"].astype(str).str.replace(".TW", "", regex=False).str.replace(".TWO", "", regex=False)
+                    df["code"] = df["code"].apply(normalize_code)
+                if "prediction_date" in df.columns:
+                    df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
+                if "target_date" in df.columns:
+                    df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
+                return df
+        except Exception as e:
+            print("load_prediction_history error:", e)
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=900)
+def load_evaluation() -> pd.DataFrame:
+    if EVALUATION_PATH.exists():
+        try:
+            df = pd.read_csv(EVALUATION_PATH)
+            if not df.empty:
+                if "symbol" in df.columns:
+                    df["code"] = df["symbol"].astype(str).str.replace(".TW", "", regex=False).str.replace(".TWO", "", regex=False)
+                    df["code"] = df["code"].apply(normalize_code)
+                if "prediction_date" in df.columns:
+                    df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
+                if "target_date" in df.columns:
+                    df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
+                if "actual_date" in df.columns:
+                    df["actual_date"] = pd.to_datetime(df["actual_date"], errors="coerce")
+                return df
+        except Exception as e:
+            print("load_evaluation error:", e)
+    return pd.DataFrame()
+
+
 @st.cache_data(ttl=3600)
 def load_local_price(code: str) -> pd.DataFrame:
     code = normalize_code(code)
@@ -344,6 +388,69 @@ def get_prediction_row(pred_df: pd.DataFrame, code: str):
     return row.iloc[0]
 
 
+def get_latest_eval_row(eval_df: pd.DataFrame, code: str):
+    if eval_df.empty or "code" not in eval_df.columns:
+        return None
+
+    temp_df = eval_df.copy()
+    temp_df["code"] = temp_df["code"].apply(normalize_code)
+    temp_df = temp_df[temp_df["code"] == normalize_code(code)].copy()
+
+    if temp_df.empty:
+        return None
+
+    if "target_date" in temp_df.columns:
+        temp_df = temp_df.sort_values("target_date", ascending=False)
+
+    return temp_df.iloc[0]
+
+
+def build_accuracy_summary(eval_df: pd.DataFrame):
+    if eval_df.empty:
+        return {
+            "mae": None,
+            "mape": None,
+            "direction_acc": None,
+            "count": 0,
+            "last_7_acc": None,
+            "last_30_acc": None,
+        }
+
+    temp = eval_df.copy()
+
+    mae = temp["abs_error"].mean() if "abs_error" in temp.columns else None
+    mape = temp["pct_error"].mean() * 100 if "pct_error" in temp.columns else None
+    direction_acc = temp["direction_correct"].mean() * 100 if "direction_correct" in temp.columns else None
+    count = len(temp)
+
+    last_7_acc = None
+    last_30_acc = None
+
+    if "target_date" in temp.columns:
+        temp["target_date"] = pd.to_datetime(temp["target_date"], errors="coerce")
+        temp = temp.dropna(subset=["target_date"]).copy()
+
+        if not temp.empty and "direction_correct" in temp.columns:
+            latest_date = temp["target_date"].max()
+
+            last_7 = temp[temp["target_date"] >= latest_date - pd.Timedelta(days=7)]
+            last_30 = temp[temp["target_date"] >= latest_date - pd.Timedelta(days=30)]
+
+            if not last_7.empty:
+                last_7_acc = last_7["direction_correct"].mean() * 100
+            if not last_30.empty:
+                last_30_acc = last_30["direction_correct"].mean() * 100
+
+    return {
+        "mae": mae,
+        "mape": mape,
+        "direction_acc": direction_acc,
+        "count": count,
+        "last_7_acc": last_7_acc,
+        "last_30_acc": last_30_acc,
+    }
+
+
 def plot_price(df: pd.DataFrame):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"], name="收盤價 Close"))
@@ -394,6 +501,18 @@ def fmt_num(val):
     if val is None or pd.isna(val):
         return "N/A"
     return f"{val:.2f}"
+
+
+def fmt_num_plain(val):
+    if val is None or pd.isna(val):
+        return "N/A"
+    return f"{val:.2f}"
+
+
+def fmt_pct_plain(val):
+    if val is None or pd.isna(val):
+        return "N/A"
+    return f"{val:.2f}%"
 
 
 def probability_label(prob):
@@ -516,6 +635,8 @@ def main():
     stock_df = load_stock_list()
     pred_df = load_predictions()
     top_df = load_top_candidates()
+    history_df = load_prediction_history()
+    eval_df = load_evaluation()
 
     if stock_df.empty:
         st.error("找不到 stock_list.csv，或檔案為空。 | stock_list.csv not found or empty.")
@@ -588,8 +709,12 @@ def main():
             st.write("OUTPUT_DIR:", str(OUTPUT_DIR))
             st.write("TOP_PATH:", str(TOP_PATH))
             st.write("DAILY_ALL_PATH:", str(DAILY_ALL_PATH))
+            st.write("PREDICTION_HISTORY_PATH:", str(PREDICTION_HISTORY_PATH))
+            st.write("EVALUATION_PATH:", str(EVALUATION_PATH))
             st.write("TOP_PATH exists:", TOP_PATH.exists())
             st.write("DAILY_ALL_PATH exists:", DAILY_ALL_PATH.exists())
+            st.write("PREDICTION_HISTORY_PATH exists:", PREDICTION_HISTORY_PATH.exists())
+            st.write("EVALUATION_PATH exists:", EVALUATION_PATH.exists())
             st.write("Configured STOCK_LIST_PATH:", str(STOCK_LIST_PATH))
             st.write("Resolved stock list path:", str(get_stock_list_path()))
             st.write("Selected code:", st.session_state.selected_code)
@@ -597,6 +722,8 @@ def main():
             st.write("Stock rows loaded:", len(stock_df))
             st.write("Prediction rows loaded:", len(pred_df))
             st.write("Top candidates loaded:", len(top_df))
+            st.write("Prediction history rows:", len(history_df))
+            st.write("Evaluation rows:", len(eval_df))
             if not pred_df.empty and "code" in pred_df.columns:
                 st.write("Prediction codes sample:", pred_df["code"].head(20).tolist())
 
@@ -604,6 +731,8 @@ def main():
     if DAILY_ALL_PATH.exists():
         ts = datetime.fromtimestamp(DAILY_ALL_PATH.stat().st_mtime)
         last_update_text = ts.strftime("%Y-%m-%d %H:%M")
+
+    acc_summary = build_accuracy_summary(eval_df)
 
     hero_left, hero_mid, hero_right = st.columns([2.2, 1.1, 1.1])
 
@@ -621,6 +750,49 @@ def main():
     with hero_right:
         st.metric("更新時間 | Last Update", last_update_text)
         st.metric("置頂數量 | Pinned", len(st.session_state.pinned_codes))
+
+    st.markdown("### 📊 真實預測表現 | Real-World Prediction Accuracy")
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Direction Accuracy", fmt_pct_plain(acc_summary["direction_acc"]))
+    a2.metric("MAE", fmt_num_plain(acc_summary["mae"]))
+    a3.metric("MAPE", fmt_pct_plain(acc_summary["mape"]))
+    a4.metric("Evaluated Rows", acc_summary["count"])
+
+    b1, b2 = st.columns(2)
+    b1.metric("7-Day Direction Accuracy", fmt_pct_plain(acc_summary["last_7_acc"]))
+    b2.metric("30-Day Direction Accuracy", fmt_pct_plain(acc_summary["last_30_acc"]))
+
+    if eval_df.empty:
+        st.info("目前還沒有 prediction_evaluation.csv 資料。先跑 evaluate_predictions.py 才會出現真實預測表現。")
+    else:
+        with st.expander("查看整體評估資料 | View Evaluation Table", expanded=False):
+            show_eval = eval_df.copy()
+
+            rename_eval = {
+                "prediction_date": "預測日期 Prediction Date",
+                "target_date": "目標日期 Target Date",
+                "actual_date": "實際日期 Actual Date",
+                "symbol": "代號 Symbol",
+                "today_close": "當日收盤 Today Close",
+                "predicted_close": "預測收盤 Pred Close",
+                "actual_close": "實際收盤 Actual Close",
+                "predicted_direction": "預測方向 Pred Dir",
+                "actual_direction": "實際方向 Actual Dir",
+                "direction_correct": "方向正確 Dir Correct",
+                "abs_error": "絕對誤差 Abs Error",
+                "pct_error": "百分比誤差 Pct Error",
+            }
+            keep_cols = [c for c in rename_eval.keys() if c in show_eval.columns]
+            show_eval = show_eval[keep_cols].rename(columns=rename_eval)
+
+            if "百分比誤差 Pct Error" in show_eval.columns:
+                show_eval["百分比誤差 Pct Error"] = (show_eval["百分比誤差 Pct Error"] * 100).round(2).astype(str) + "%"
+
+            st.dataframe(
+                show_eval.sort_values(by="目標日期 Target Date", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     st.markdown("### 🔥 今日推薦 | Top Picks")
     if not top_df.empty:
@@ -661,6 +833,7 @@ def main():
     for i, code in enumerate(pinned_codes):
         row = stock_df[stock_df["code"] == code].iloc[0]
         pred_row = get_prediction_row(pred_df, code)
+        latest_eval = get_latest_eval_row(eval_df, code)
         weight = industry_weights.get(str(row["industry"]), 1.0)
 
         with cols[i]:
@@ -685,6 +858,12 @@ def main():
                 )
             else:
                 st.caption(f"產業 | Industry: {row['industry']}")
+
+            if latest_eval is not None:
+                if "direction_correct" in latest_eval:
+                    st.caption(f"最新方向是否正確 | Last Direction Correct: {int(latest_eval['direction_correct'])}")
+                if "abs_error" in latest_eval:
+                    st.caption(f"最新誤差 | Last Abs Error: {fmt_num_plain(latest_eval['abs_error'])}")
 
             _, remove_col = st.columns([3, 2])
             with remove_col:
@@ -741,6 +920,7 @@ def main():
 
     latest = feature_df.iloc[-1]
     pred_row = get_prediction_row(pred_df, code)
+    latest_eval = get_latest_eval_row(eval_df, code)
 
     prob_up = None
     pred_return = None
@@ -795,6 +975,59 @@ def main():
         f"產業權重 | Industry Weight: {weight:.2f}   •   "
         f"資料來源 | Data Source: {data_source}"
     )
+
+    st.markdown("### 🧪 該股票真實預測結果 | Real Prediction Result for This Stock")
+    if latest_eval is None:
+        st.info("這支股票目前還沒有已完成的 evaluation 資料。")
+    else:
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Predicted Close", fmt_num_plain(latest_eval["predicted_close"]) if "predicted_close" in latest_eval else "N/A")
+        e2.metric("Actual Close", fmt_num_plain(latest_eval["actual_close"]) if "actual_close" in latest_eval else "N/A")
+        e3.metric("Abs Error", fmt_num_plain(latest_eval["abs_error"]) if "abs_error" in latest_eval else "N/A")
+        e4.metric("Direction Correct", str(int(latest_eval["direction_correct"])) if "direction_correct" in latest_eval and not pd.isna(latest_eval["direction_correct"]) else "N/A")
+
+        if "predicted_direction" in latest_eval and "actual_direction" in latest_eval:
+            st.caption(
+                f"Predicted Direction: {latest_eval['predicted_direction']}  •  "
+                f"Actual Direction: {latest_eval['actual_direction']}"
+            )
+
+    if not history_df.empty and "code" in history_df.columns:
+        stock_history = history_df[history_df["code"] == code].copy()
+        if not stock_history.empty:
+            with st.expander("查看這支股票的歷史預測 | View Prediction History For This Stock", expanded=False):
+                show_hist_cols = [
+                    c for c in [
+                        "prediction_date",
+                        "target_date",
+                        "symbol",
+                        "today_close",
+                        "predicted_close",
+                        "predicted_return",
+                        "predicted_direction",
+                    ] if c in stock_history.columns
+                ]
+                show_hist = stock_history[show_hist_cols].copy()
+
+                rename_hist = {
+                    "prediction_date": "預測日期 Prediction Date",
+                    "target_date": "目標日期 Target Date",
+                    "symbol": "代號 Symbol",
+                    "today_close": "當日收盤 Today Close",
+                    "predicted_close": "預測收盤 Predicted Close",
+                    "predicted_return": "預測報酬 Predicted Return",
+                    "predicted_direction": "預測方向 Predicted Direction",
+                }
+                show_hist = show_hist.rename(columns=rename_hist)
+
+                if "預測報酬 Predicted Return" in show_hist.columns:
+                    show_hist["預測報酬 Predicted Return"] = (show_hist["預測報酬 Predicted Return"] * 100).round(2).astype(str) + "%"
+
+                st.dataframe(
+                    show_hist.sort_values(by="目標日期 Target Date", ascending=False),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "價格圖表 | Price",

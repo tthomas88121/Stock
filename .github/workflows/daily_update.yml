@@ -1,10 +1,9 @@
-name: Daily Taiwan Stock Update
+name: Daily Stock Update
 
 on:
   workflow_dispatch:
   schedule:
-    # 06:10 UTC = 14:10 Taiwan time
-    - cron: "10 6 * * 1-5"
+    - cron: "30 22 * * 1-5"
 
 permissions:
   contents: write
@@ -14,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update-predictions:
+  daily-update:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +21,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,28 +30,35 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn xgboost yfinance joblib streamlit plotly
+          pip install -r requirements.txt
 
-      - name: Run daily update
-        run: |
-          python src/daily_update.py
+      - name: Run daily data update
+        run: python src/daily_update.py
 
-      - name: Show changed files
-        run: |
-          git status --short
+      - name: Retrain models
+        run: python src/model_train.py
 
-      - name: Commit updated prediction files
+      - name: Generate predictions
+        run: python src/predict.py
+
+      - name: Evaluate predictions
+        run: python src/evaluate_predictions.py
+
+            - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add outputs/daily_all_predictions.csv outputs/top_candidates.csv outputs/failed_symbols.csv src/data/ 2>/dev/null || true
-          git add outputs/daily_all_predictions.csv outputs/top_candidates.csv
-          if [ -f outputs/failed_symbols.csv ]; then git add outputs/failed_symbols.csv; fi
+          git add data/merged_dataset.csv || true
+          git add data/predictions_history.csv || true
+          git add data/prediction_evaluation.csv || true
+          git add data/model_metrics.json || true
+          git add data/training_features.json || true
+          git add outputs/daily_all_predictions.csv || true
+          git add outputs/top_candidates.csv || true
+          git add outputs/failed_symbols.csv || true
+          git add random_forest_model.pkl || true
+          git add random_forest_regressor.pkl || true
 
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Daily Taiwan stock update"
-            git push
-          fi
+          git diff --cached --quiet || git commit -m "Auto daily stock update"
+          git push

@@ -1,59 +1,18 @@
 from pathlib import Path
 
-import joblib
-import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from config import (
-    BASE_DIR,
-    PRICE_DIR,
-    FEATURE_COLUMNS,
-    MODEL_PATH,
-    REG_MODEL_PATH,
-    STOCK_LIST_PATH,
-    get_stock_list_path,
-)
-from stock_list import build_stock_list
+from config import PRICE_DIR, get_stock_list_path, ensure_directories
 
 
-OUTPUT_DIR = BASE_DIR / "outputs"
-TOP_CANDIDATES_PATH = OUTPUT_DIR / "top_candidates.csv"
-DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
-FAILED_PATH = OUTPUT_DIR / "failed_symbols.csv"
+MERGED_DATASET_PATH = Path("data") / "merged_dataset.csv"
 
 
 def normalize_code(value) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value).replace(".0", "").strip()
-
-
-def load_or_build_stock_list() -> pd.DataFrame:
-    stock_list_path = get_stock_list_path()
-
-    if stock_list_path.exists():
-        try:
-            df = pd.read_csv(stock_list_path)
-            if not df.empty:
-                df["code"] = df["code"].apply(normalize_code)
-                return df
-        except Exception:
-            pass
-
-    if STOCK_LIST_PATH.exists():
-        try:
-            df = pd.read_csv(STOCK_LIST_PATH)
-            if not df.empty:
-                df["code"] = df["code"].apply(normalize_code)
-                return df
-        except Exception:
-            pass
-
-    df = build_stock_list()
-    if not df.empty:
-        df["code"] = df["code"].apply(normalize_code)
-    return df
 
 
 def normalize_ticker(ticker: str) -> str:
@@ -67,6 +26,19 @@ def normalize_ticker(ticker: str) -> str:
             return f"{ticker}.TW"
 
     return ticker
+
+
+def load_stock_list() -> pd.DataFrame:
+    stock_list_path = get_stock_list_path()
+    if not stock_list_path.exists():
+        raise FileNotFoundError(f"stock_list.csv not found: {stock_list_path}")
+
+    df = pd.read_csv(stock_list_path)
+    if df.empty:
+        raise ValueError("stock_list.csv is empty.")
+
+    df["code"] = df["code"].apply(normalize_code)
+    return df
 
 
 def download_recent_data(ticker: str) -> pd.DataFrame:
@@ -98,7 +70,8 @@ def download_recent_data(ticker: str) -> pd.DataFrame:
         df = df.dropna(subset=["Date"]).copy()
 
         return df
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] download {ticker}: {e}")
         return pd.DataFrame()
 
 
@@ -145,36 +118,41 @@ def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFram
     return merged
 
 
-def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series) -> pd.DataFrame:
-    if price_df is None or price_df.empty:
+def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def build_features_for_one_stock(
+    price_df: pd.DataFrame,
+    meta_row: pd.Series,
+    include_targets: bool = True,
+) -> pd.DataFrame:
+    if price_df is None or not isinstance(price_df, pd.DataFrame) or price_df.empty:
+        return pd.DataFrame()
+
+    required_input_cols = ["Date", "Close", "Volume"]
+    missing_input_cols = [col for col in required_input_cols if col not in price_df.columns]
+    if missing_input_cols:
         return pd.DataFrame()
 
     df = price_df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"]).copy()
 
-    required = ["Date", "Close", "Volume"]
-    if not all(col in df.columns for col in required):
-        return pd.DataFrame()
-
-    # Use real industry score if available; otherwise fallback to 1.0
-    industry_score = stock_row.get("IndustryScore", stock_row.get("industry_score", 1.0))
-    try:
-        industry_score = float(industry_score)
-    except Exception:
-        industry_score = 1.0
-
-    # Existing features
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA60"] = df["Close"].rolling(60).mean()
 
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
-    df["RSI14"] = 100 - (100 / (1 + rs))
-
+    df["RSI14"] = calculate_rsi(df["Close"], 14)
     df["Return"] = df["Close"].pct_change()
     df["Vol_Change"] = df["Volume"].pct_change()
     df["Volatility20"] = df["Return"].rolling(20).std()
@@ -185,9 +163,10 @@ def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series) -
     df["Price_Trend_10d"] = df["Close"].pct_change(10)
     df["RSI_Trend"] = df["RSI14"].diff()
 
+    industry_score = 1.0
     df["IndustryScore"] = industry_score
 
-    # New features
+    # keep these extra features so training and prediction stay compatible
     df["Return_1d"] = df["Close"].pct_change(1)
     df["Return_3d"] = df["Close"].pct_change(3)
     df["Return_5d"] = df["Close"].pct_change(5)
@@ -203,178 +182,120 @@ def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series) -
     volume_ma20 = df["Volume"].rolling(20).mean()
     df["Volume_ratio"] = df["Volume"] / volume_ma20.replace(0, pd.NA)
 
-    # Numeric cleanup
-    df = df.replace([np.inf, -np.inf], np.nan)
+    if include_targets:
+        df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
+        df["Target_Return"] = (
+            (df["Close"].shift(-1) - df["Close"]) / df["Close"]
+        ).clip(-0.10, 0.10)
 
-    for col in FEATURE_COLUMNS:
-        if col not in df.columns:
-            df[col] = np.nan
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["code"] = str(meta_row["code"])
+    df["name"] = meta_row.get("name", "")
+    df["market"] = meta_row.get("market", "")
+    df["industry"] = meta_row.get("industry", "")
+    df["ticker"] = meta_row.get("ticker", "")
 
-    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce")
+    df = df.replace([float("inf"), float("-inf")], pd.NA)
 
-    df = df.dropna(subset=FEATURE_COLUMNS + ["Close", "Volume"]).reset_index(drop=True)
+    required_cols = [
+        "Date",
+        "Close",
+        "MA5",
+        "MA20",
+        "MA60",
+        "RSI14",
+        "Return",
+        "Vol_Change",
+        "Volatility20",
+        "IndustryScore",
+        "MA20_slope",
+        "MA60_slope",
+        "Price_Trend_5d",
+        "Price_Trend_10d",
+        "RSI_Trend",
+        "Return_1d",
+        "Return_3d",
+        "Return_5d",
+        "Return_10d",
+        "Vol_5d",
+        "Vol_10d",
+        "MA20_gap",
+        "MA60_gap",
+        "Volume_ratio",
+    ]
+
+    if include_targets:
+        required_cols.extend(["Target", "Target_Return"])
+
+    df = df.dropna(subset=required_cols).reset_index(drop=True)
     return df
 
 
-def trading_signal_label(prob_up: float, pred_return: float, close_price: float, ma20: float, ma60: float) -> str:
-    trend_up = close_price > ma20 and ma20 > ma60
+def build_merged_dataset(stock_df: pd.DataFrame) -> pd.DataFrame | None:
+    all_frames = []
 
-    if pred_return >= 0.03 and trend_up and prob_up >= 0.55:
-        return "STRONG BUY"
-    if pred_return >= 0.02 and trend_up:
-        return "BUY"
-    if pred_return >= 0.015 and close_price > ma20:
-        return "WATCH"
-    return "NO BUY"
+    for _, row in stock_df.iterrows():
+        code = normalize_code(row["code"])
+        price_path = PRICE_DIR / f"{code}.csv"
+
+        if not price_path.exists():
+            print(f"[SKIP] Missing price file: {price_path.name}")
+            continue
+
+        try:
+            price_df = pd.read_csv(price_path)
+            feature_df = build_features_for_one_stock(price_df, row, include_targets=True)
+
+            if feature_df.empty:
+                print(f"[SKIP] Empty features for {code}")
+                continue
+
+            all_frames.append(feature_df)
+            print(f"[OK] Built features for {code}")
+
+        except Exception as e:
+            print(f"[ERROR] feature build {code}: {e}")
+
+    if not all_frames:
+        print("[WARN] No merged dataset generated.")
+        return None
+
+    merged_df = pd.concat(all_frames, ignore_index=True)
+    MERGED_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    merged_df.to_csv(MERGED_DATASET_PATH, index=False, encoding="utf-8-sig")
+
+    print(f"Saved merged dataset -> {MERGED_DATASET_PATH}")
+    return merged_df
 
 
-def setup_quality_label(pred_return: float) -> str:
-    if pred_return >= 0.03:
-        return "High-conviction setup"
-    if pred_return >= 0.02:
-        return "Valid buy setup"
-    if pred_return >= 0.015:
-        return "Watchlist candidate"
-    return "Weak setup"
-
-
-def main(top_n: int = 10):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    stock_df = load_or_build_stock_list()
-    if stock_df.empty:
-        raise ValueError("stock_list is empty. Please check stock_list.csv or build_stock_list().")
-
-    clf = joblib.load(MODEL_PATH) if Path(MODEL_PATH).exists() else None
-    reg = joblib.load(REG_MODEL_PATH) if Path(REG_MODEL_PATH).exists() else None
-
-    if clf is None or reg is None:
-        raise FileNotFoundError("Missing trained classifier or regressor model.")
-
-    results = []
-    failed = []
+def main():
+    ensure_directories()
+    stock_df = load_stock_list()
 
     total = len(stock_df)
+    print(f"Updating price data for {total} stocks...")
 
     for idx, (_, row) in enumerate(stock_df.iterrows(), start=1):
         code = normalize_code(row["code"])
         ticker = row["ticker"]
         name = row.get("name", "")
-        market = row.get("market", "")
-        industry = row.get("industry", "")
 
-        print(f"[{idx}/{total}] {code} {name}")
+        print(f"[{idx}/{total}] Updating {code} {name}")
 
         recent_df = download_recent_data(ticker)
         if recent_df.empty:
-            failed.append({"code": code, "ticker": ticker, "reason": "download_failed"})
+            print(f"[SKIP] Download failed: {ticker}")
             continue
-
-        full_df = merge_and_save_price_data(code, recent_df)
-
-        feature_df = build_features_for_one_stock(full_df, row)
-        if feature_df.empty:
-            failed.append({"code": code, "ticker": ticker, "reason": "feature_failed"})
-            continue
-
-        latest = feature_df.iloc[-1]
 
         try:
-            X = pd.DataFrame([latest[FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
-
-            for col in FEATURE_COLUMNS:
-                X[col] = pd.to_numeric(X[col], errors="coerce")
-
-            X = X.astype(float)
-
-            prob_proba = clf.predict_proba(X)
-            if prob_proba.shape[1] >= 2:
-                prob_up = float(prob_proba[0][1])
-            else:
-                prob_up = float(prob_proba[0][0])
-
-            raw_pred_return = float(reg.predict(X)[0])
-            pred_return = max(min(raw_pred_return, 0.10), -0.10)
-
-            pred_price = float(latest["Close"] * (1 + pred_return))
-
-            signal = trading_signal_label(
-                prob_up=prob_up,
-                pred_return=pred_return,
-                close_price=float(latest["Close"]),
-                ma20=float(latest["MA20"]),
-                ma60=float(latest["MA60"]),
-            )
-
-            setup_quality = setup_quality_label(pred_return)
+            merge_and_save_price_data(code, recent_df)
+            print(f"[OK] Saved price data for {code}")
         except Exception as e:
-            failed.append(
-                {
-                    "code": code,
-                    "ticker": ticker,
-                    "reason": f"predict_failed: {str(e)}",
-                }
-            )
-            continue
+            print(f"[ERROR] save price {code}: {e}")
 
-        results.append(
-            {
-                "Date": pd.to_datetime(latest["Date"]).strftime("%Y-%m-%d"),
-                "code": normalize_code(code),
-                "name": name,
-                "market": market,
-                "industry": industry,
-                "ticker": normalize_ticker(ticker),
-                "Close": float(latest["Close"]),
-                "MA20": float(latest["MA20"]),
-                "MA60": float(latest["MA60"]),
-                "RSI14": float(latest["RSI14"]),
-                "prob_up": prob_up,
-                "pred_return": pred_return,
-                "pred_price": pred_price,
-                "signal": signal,
-                "setup_quality": setup_quality,
-            }
-        )
-
-    result_df = pd.DataFrame(results)
-    failed_df = pd.DataFrame(failed)
-
-    if not result_df.empty:
-        result_df["code"] = result_df["code"].apply(normalize_code)
-
-        result_df["signal_rank"] = result_df["signal"].map(
-            {
-                "STRONG BUY": 3,
-                "BUY": 2,
-                "WATCH": 1,
-                "NO BUY": 0,
-            }
-        ).fillna(0)
-
-        result_df = result_df.sort_values(
-            by=["signal_rank", "pred_return", "prob_up"],
-            ascending=[False, False, False]
-        ).reset_index(drop=True)
-
-        result_df = result_df.drop(columns=["signal_rank"])
-
-        result_df.to_csv(DAILY_ALL_PATH, index=False, encoding="utf-8-sig")
-        result_df.head(top_n).to_csv(TOP_CANDIDATES_PATH, index=False, encoding="utf-8-sig")
-
-    if not failed_df.empty:
-        failed_df["code"] = failed_df["code"].apply(normalize_code)
-        failed_df.to_csv(FAILED_PATH, index=False, encoding="utf-8-sig")
-    elif FAILED_PATH.exists():
-        FAILED_PATH.unlink()
-
-    print("Done.")
-    print(f"Saved: {DAILY_ALL_PATH}")
-    print(f"Saved: {TOP_CANDIDATES_PATH}")
-    print(f"Failed count: {len(failed_df)}")
+    print("\nRebuilding merged dataset...")
+    build_merged_dataset(stock_df)
+    print("Daily update finished.")
 
 
 if __name__ == "__main__":
-    main(top_n=10)
+    main()
