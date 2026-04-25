@@ -23,8 +23,17 @@ TOP_PATH = OUTPUT_DIR / "top_candidates.csv"
 DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
 
 # NEW: prediction history / evaluation files
-PREDICTION_HISTORY_PATH = ROOT_DIR / "data" / "predictions_history.csv"
-EVALUATION_PATH = ROOT_DIR / "data" / "prediction_evaluation.csv"
+PREDICTION_HISTORY_CANDIDATES = [
+    ROOT_DIR / "data" / "predictions_history.csv",
+    ROOT_DIR / "src" / "data" / "predictions_history.csv",
+    ROOT_DIR / "outputs" / "predictions_history.csv",
+]
+
+EVALUATION_CANDIDATES = [
+    ROOT_DIR / "data" / "prediction_evaluation.csv",
+    ROOT_DIR / "src" / "data" / "prediction_evaluation.csv",
+    ROOT_DIR / "outputs" / "prediction_evaluation.csv",
+]
 
 st.set_page_config(
     page_title="AI 台股智慧儀表板 | AI Taiwan Stock Dashboard",
@@ -202,41 +211,61 @@ def load_top_candidates() -> pd.DataFrame:
 
 @st.cache_data(ttl=900)
 def load_prediction_history() -> pd.DataFrame:
-    if PREDICTION_HISTORY_PATH.exists():
-        try:
-            df = pd.read_csv(PREDICTION_HISTORY_PATH)
-            if not df.empty:
-                if "symbol" in df.columns:
-                    df["code"] = df["symbol"].astype(str).str.replace(".TW", "", regex=False).str.replace(".TWO", "", regex=False)
+    for path in PREDICTION_HISTORY_CANDIDATES:
+        if path.exists():
+            try:
+                df = pd.read_csv(path)
+                if not df.empty:
+                    if "symbol" in df.columns:
+                        df["code"] = (
+                            df["symbol"]
+                            .astype(str)
+                            .str.replace(".TW", "", regex=False)
+                            .str.replace(".TWO", "", regex=False)
+                        )
+
                     df["code"] = df["code"].apply(normalize_code)
-                if "prediction_date" in df.columns:
-                    df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
-                if "target_date" in df.columns:
-                    df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
-                return df
-        except Exception as e:
-            print("load_prediction_history error:", e)
+
+                    if "prediction_date" in df.columns:
+                        df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
+                    if "target_date" in df.columns:
+                        df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
+
+                    return df
+            except Exception as e:
+                print("load_prediction_history error:", e)
+
     return pd.DataFrame()
 
 
 @st.cache_data(ttl=900)
 def load_evaluation() -> pd.DataFrame:
-    if EVALUATION_PATH.exists():
-        try:
-            df = pd.read_csv(EVALUATION_PATH)
-            if not df.empty:
-                if "symbol" in df.columns:
-                    df["code"] = df["symbol"].astype(str).str.replace(".TW", "", regex=False).str.replace(".TWO", "", regex=False)
+    for path in EVALUATION_CANDIDATES:
+        if path.exists():
+            try:
+                df = pd.read_csv(path)
+                if not df.empty:
+                    if "symbol" in df.columns:
+                        df["code"] = (
+                            df["symbol"]
+                            .astype(str)
+                            .str.replace(".TW", "", regex=False)
+                            .str.replace(".TWO", "", regex=False)
+                        )
+
                     df["code"] = df["code"].apply(normalize_code)
-                if "prediction_date" in df.columns:
-                    df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
-                if "target_date" in df.columns:
-                    df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
-                if "actual_date" in df.columns:
-                    df["actual_date"] = pd.to_datetime(df["actual_date"], errors="coerce")
-                return df
-        except Exception as e:
-            print("load_evaluation error:", e)
+
+                    if "prediction_date" in df.columns:
+                        df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
+                    if "target_date" in df.columns:
+                        df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
+                    if "actual_date" in df.columns:
+                        df["actual_date"] = pd.to_datetime(df["actual_date"], errors="coerce")
+
+                    return df
+            except Exception as e:
+                print("load_evaluation error:", e)
+
     return pd.DataFrame()
 
 
