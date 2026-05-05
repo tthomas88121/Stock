@@ -55,7 +55,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -f data/merged_dataset.csv || true
           git add -f data/predictions_history.csv || true
           git add -f data/prediction_evaluation.csv || true
           git add -f data/model_metrics.json || true
