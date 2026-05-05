@@ -44,19 +44,29 @@ jobs:
       - name: Evaluate predictions
         run: python src/evaluate_predictions.py
 
+      - name: Copy evaluation files to outputs
+        run: |
+          mkdir -p outputs
+          cp data/predictions_history.csv outputs/predictions_history.csv || true
+          cp data/prediction_evaluation.csv outputs/prediction_evaluation.csv || true
+
       - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/merged_dataset.csv || true
-          git add data/predictions_history.csv || true
-          git add data/prediction_evaluation.csv || true
-          git add data/model_metrics.json || true
-          git add data/training_features.json || true
+          git add -f data/merged_dataset.csv || true
+          git add -f data/predictions_history.csv || true
+          git add -f data/prediction_evaluation.csv || true
+          git add -f data/model_metrics.json || true
+          git add -f data/training_features.json || true
+
           git add outputs/daily_all_predictions.csv || true
           git add outputs/top_candidates.csv || true
           git add outputs/failed_symbols.csv || true
+          git add outputs/predictions_history.csv || true
+          git add outputs/prediction_evaluation.csv || true
+
           git add random_forest_model.pkl || true
           git add random_forest_regressor.pkl || true
 
