@@ -44,7 +44,7 @@ jobs:
       - name: Evaluate predictions
         run: python src/evaluate_predictions.py
 
-      - name: Copy evaluation files to outputs
+      - name: Copy history and evaluation to outputs
         run: |
           mkdir -p outputs
           cp data/predictions_history.csv outputs/predictions_history.csv || true
@@ -70,4 +70,5 @@ jobs:
           git add random_forest_regressor.pkl || true
 
           git diff --cached --quiet || git commit -m "Auto daily stock update"
+          git pull --rebase origin main
           git push
