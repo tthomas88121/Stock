@@ -58,18 +58,16 @@ jobs:
 
       - name: Commit updated files
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add outputs/daily_all_predictions.csv || true
-          git add outputs/prediction_evaluation.csv || true
-          git add outputs/top_candidates.csv || true
-          git add outputs/failed_symbols.csv || true
-          git add random_forest_model.pkl || true
-          git add random_forest_regressor.pkl || true
+              git add outputs/*.csv || true
+              git add data/model_metrics.json || true
+              git add *.pkl || true
 
-          git status
+              git status
 
-          git commit -m "Auto daily stock update" || echo "No changes to commit"
-          git pull --rebase origin main
-          git push origin main
+              git commit -m "Auto daily stock update" || echo "No changes"
+
+              git pull --rebase origin main
+              git push origin main
