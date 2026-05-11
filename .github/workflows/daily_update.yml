@@ -21,6 +21,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,43 +33,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily data update
-        run: python src/daily_update.py
+      - name: Run daily update
+        run: |
+          python src/daily_update.py
 
       - name: Retrain models
-        run: python src/model_train.py
+        run: |
+          python src/model_train.py
 
       - name: Generate predictions
-        run: python src/predict.py
+        run: |
+          python src/predict.py
 
       - name: Evaluate predictions
-        run: python src/evaluate_predictions.py
-
-      - name: Copy history and evaluation to outputs
         run: |
-          mkdir -p outputs
-          cp data/predictions_history.csv outputs/predictions_history.csv || true
-          cp data/prediction_evaluation.csv outputs/prediction_evaluation.csv || true
+          python src/evaluate_predictions.py
+
+      - name: Debug output files
+        run: |
+          echo "Current files:"
+          find . -maxdepth 3 -type f | sort
+          echo "Output CSV files:"
+          ls -lah outputs || true
 
       - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -f data/predictions_history.csv || true
-          git add -f data/prediction_evaluation.csv || true
-          git add -f data/model_metrics.json || true
-          git add -f data/training_features.json || true
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add outputs/daily_all_predictions.csv || true
+          git add outputs/prediction_evaluation.csv || true
           git add outputs/top_candidates.csv || true
           git add outputs/failed_symbols.csv || true
-          git add outputs/predictions_history.csv || true
-          git add outputs/prediction_evaluation.csv || true
-
           git add random_forest_model.pkl || true
           git add random_forest_regressor.pkl || true
 
-          git diff --cached --quiet || git commit -m "Auto daily stock update"
+          git status
+
+          git commit -m "Auto daily stock update" || echo "No changes to commit"
           git pull --rebase origin main
-          git push
+          git push origin main
