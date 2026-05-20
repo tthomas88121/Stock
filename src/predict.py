@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from datetime import timedelta
 
 import joblib
 import numpy as np
@@ -69,19 +70,6 @@ def normalize_ticker(ticker: str) -> str:
             return f"{ticker}.TW"
 
     return ticker
-
-
-def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
 
 
 def download_recent_data(ticker: str) -> pd.DataFrame:
@@ -160,7 +148,11 @@ def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFram
     return merged
 
 
-def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series, active_features: list[str]) -> pd.DataFrame:
+def build_features_for_one_stock(
+    price_df: pd.DataFrame,
+    stock_row: pd.Series,
+    active_features: list[str],
+) -> pd.DataFrame:
     if price_df is None or price_df.empty:
         return pd.DataFrame()
 
@@ -229,7 +221,13 @@ def build_features_for_one_stock(price_df: pd.DataFrame, stock_row: pd.Series, a
     return df
 
 
-def trading_signal_label(prob_up: float, pred_return: float, close_price: float, ma20: float, ma60: float) -> str:
+def trading_signal_label(
+    prob_up: float,
+    pred_return: float,
+    close_price: float,
+    ma20: float,
+    ma60: float,
+) -> str:
     trend_up = close_price > ma20 and ma20 > ma60
 
     if pred_return >= 0.03 and trend_up and prob_up >= 0.55:
@@ -249,6 +247,20 @@ def setup_quality_label(pred_return: float) -> str:
     if pred_return >= 0.015:
         return "Watchlist candidate"
     return "Weak setup"
+
+
+def get_next_trading_day(date_value):
+    """
+    Simple next-day target.
+    If prediction is Friday, target becomes Monday.
+    """
+    d = pd.to_datetime(date_value).date()
+    next_day = d + timedelta(days=1)
+
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+
+    return next_day
 
 
 def main(top_n: int = 10):
@@ -278,7 +290,7 @@ def main(top_n: int = 10):
 
     for idx, (_, row) in enumerate(stock_df.iterrows(), start=1):
         code = normalize_code(row["code"])
-        ticker = row["ticker"]
+        ticker = normalize_ticker(row["ticker"])
         name = row.get("name", "")
         market = row.get("market", "")
         industry = row.get("industry", "")
@@ -315,17 +327,19 @@ def main(top_n: int = 10):
 
             raw_pred_return = float(reg.predict(X)[0])
             pred_return = max(min(raw_pred_return, 0.10), -0.10)
-            pred_price = float(latest["Close"] * (1 + pred_return))
+            today_close = float(latest["Close"])
+            pred_price = float(today_close * (1 + pred_return))
 
             signal = trading_signal_label(
                 prob_up=prob_up,
                 pred_return=pred_return,
-                close_price=float(latest["Close"]),
+                close_price=today_close,
                 ma20=float(latest["MA20"]),
                 ma60=float(latest["MA60"]),
             )
 
             setup_quality = setup_quality_label(pred_return)
+
         except Exception as e:
             failed.append(
                 {
@@ -336,15 +350,19 @@ def main(top_n: int = 10):
             )
             continue
 
+        prediction_date = pd.to_datetime(latest["Date"]).date()
+        target_date = get_next_trading_day(prediction_date)
+        pred_dir = "UP" if pred_price > today_close else "DOWN"
+
         results.append(
             {
-                "Date": pd.to_datetime(latest["Date"]).strftime("%Y-%m-%d"),
+                "Date": prediction_date.strftime("%Y-%m-%d"),
                 "code": normalize_code(code),
                 "name": name,
                 "market": market,
                 "industry": industry,
-                "ticker": normalize_ticker(ticker),
-                "Close": float(latest["Close"]),
+                "ticker": ticker,
+                "Close": today_close,
                 "MA20": float(latest["MA20"]),
                 "MA60": float(latest["MA60"]),
                 "RSI14": float(latest["RSI14"]),
@@ -358,9 +376,12 @@ def main(top_n: int = 10):
 
         prediction_rows.append(
             {
-                "symbol": normalize_ticker(ticker),
-                "today_close": float(latest["Close"]),
-                "predicted_close": pred_price,
+                "Prediction Date": prediction_date.strftime("%Y-%m-%d"),
+                "Target Date": target_date.strftime("%Y-%m-%d"),
+                "Symbol": ticker,
+                "Today Close": today_close,
+                "Pred Close": pred_price,
+                "Pred Dir": pred_dir,
             }
         )
 
@@ -381,14 +402,18 @@ def main(top_n: int = 10):
 
         result_df = result_df.sort_values(
             by=["signal_rank", "pred_return", "prob_up"],
-            ascending=[False, False, False]
+            ascending=[False, False, False],
         ).reset_index(drop=True)
 
         result_df = result_df.drop(columns=["signal_rank"])
 
         result_df.to_csv(DAILY_ALL_PATH, index=False, encoding="utf-8-sig")
         result_df.head(top_n).to_csv(TOP_CANDIDATES_PATH, index=False, encoding="utf-8-sig")
+
         save_predictions(prediction_rows)
+
+        print(f"Saved prediction rows: {len(prediction_rows)}")
+
     else:
         print("No predictions generated.")
 

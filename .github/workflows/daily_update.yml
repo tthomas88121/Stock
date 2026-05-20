@@ -3,7 +3,9 @@ name: Daily Stock Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 22 * * 1-5"
+    # Taiwan market closes around 13:30 Taiwan time.
+    # This runs at 06:30 UTC = 14:30 Taiwan time, Mon-Fri.
+    - cron: "30 6 * * 1-5"
 
 permissions:
   contents: write
@@ -33,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily update
+      - name: Run daily price update
         run: |
           python src/daily_update.py
 
@@ -41,33 +43,39 @@ jobs:
         run: |
           python src/model_train.py
 
-      - name: Generate predictions
+      - name: Generate new predictions
         run: |
           python src/predict.py
 
-      - name: Evaluate predictions
+      - name: Evaluate completed predictions
         run: |
           python src/evaluate_predictions.py
 
       - name: Debug output files
         run: |
-          echo "Current files:"
-          find . -maxdepth 3 -type f | sort
-          echo "Output CSV files:"
+          echo "Current CSV files:"
+          find . -maxdepth 4 -type f \( -name "*.csv" -o -name "*.json" -o -name "*.pkl" \) | sort
+
+          echo "Data folder:"
+          ls -lah data || true
+
+          echo "Outputs folder:"
           ls -lah outputs || true
 
       - name: Commit updated files
         run: |
-              git config user.name "github-actions[bot]"
-              git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-              git add outputs/*.csv || true
-              git add data/model_metrics.json || true
-              git add *.pkl || true
+          git add data/*.csv || true
+          git add data/price/*.csv || true
+          git add data/*.json || true
+          git add outputs/*.csv || true
+          git add *.pkl || true
 
-              git status
+          git status
 
-              git commit -m "Auto daily stock update" || echo "No changes"
+          git commit -m "Auto daily stock update" || echo "No changes to commit"
 
-              git pull --rebase origin main
-              git push origin main
+          git pull --rebase origin main
+          git push origin main
