@@ -9,6 +9,7 @@ import yfinance as yf
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
+
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
@@ -22,7 +23,9 @@ from config import (
 TOP_PATH = OUTPUT_DIR / "top_candidates.csv"
 DAILY_ALL_PATH = OUTPUT_DIR / "daily_all_predictions.csv"
 
-# NEW: prediction history / evaluation files
+PREDICTION_HISTORY_PATH = ROOT_DIR / "data" / "predictions_history.csv"
+EVALUATION_PATH = ROOT_DIR / "data" / "prediction_evaluation.csv"
+
 PREDICTION_HISTORY_CANDIDATES = [
     ROOT_DIR / "data" / "predictions_history.csv",
     ROOT_DIR / "src" / "data" / "predictions_history.csv",
@@ -46,6 +49,26 @@ def normalize_code(value) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value).replace(".0", "").strip()
+
+
+def normalize_result_columns(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {
+        "Prediction Date": "prediction_date",
+        "Target Date": "target_date",
+        "Actual Date": "actual_date",
+        "Symbol": "symbol",
+        "Today Close": "today_close",
+        "Pred Close": "predicted_close",
+        "Actual Close": "actual_close",
+        "Pred Return": "predicted_return",
+        "Actual Return": "actual_return",
+        "Pred Dir": "predicted_direction",
+        "Actual Dir": "actual_direction",
+        "Direction Correct": "direction_correct",
+        "Abs Error": "abs_error",
+        "Pct Error": "pct_error",
+    }
+    return df.rename(columns=rename_map)
 
 
 def inject_css():
@@ -180,6 +203,7 @@ def load_stock_list() -> pd.DataFrame:
                     return df
             except Exception:
                 continue
+
     return pd.DataFrame()
 
 
@@ -193,6 +217,7 @@ def load_predictions() -> pd.DataFrame:
                 return df
         except Exception as e:
             print("load_predictions error:", e)
+
     return pd.DataFrame()
 
 
@@ -206,6 +231,7 @@ def load_top_candidates() -> pd.DataFrame:
                 return df
         except Exception as e:
             print("load_top_candidates error:", e)
+
     return pd.DataFrame()
 
 
@@ -215,6 +241,8 @@ def load_prediction_history() -> pd.DataFrame:
         if path.exists():
             try:
                 df = pd.read_csv(path)
+                df = normalize_result_columns(df)
+
                 if not df.empty:
                     if "symbol" in df.columns:
                         df["code"] = (
@@ -224,14 +252,17 @@ def load_prediction_history() -> pd.DataFrame:
                             .str.replace(".TWO", "", regex=False)
                         )
 
+                    if "code" not in df.columns:
+                        continue
+
                     df["code"] = df["code"].apply(normalize_code)
 
-                    if "prediction_date" in df.columns:
-                        df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
-                    if "target_date" in df.columns:
-                        df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
+                    for col in ["prediction_date", "target_date"]:
+                        if col in df.columns:
+                            df[col] = pd.to_datetime(df[col], errors="coerce")
 
                     return df
+
             except Exception as e:
                 print("load_prediction_history error:", e)
 
@@ -244,6 +275,8 @@ def load_evaluation() -> pd.DataFrame:
         if path.exists():
             try:
                 df = pd.read_csv(path)
+                df = normalize_result_columns(df)
+
                 if not df.empty:
                     if "symbol" in df.columns:
                         df["code"] = (
@@ -253,16 +286,17 @@ def load_evaluation() -> pd.DataFrame:
                             .str.replace(".TWO", "", regex=False)
                         )
 
+                    if "code" not in df.columns:
+                        continue
+
                     df["code"] = df["code"].apply(normalize_code)
 
-                    if "prediction_date" in df.columns:
-                        df["prediction_date"] = pd.to_datetime(df["prediction_date"], errors="coerce")
-                    if "target_date" in df.columns:
-                        df["target_date"] = pd.to_datetime(df["target_date"], errors="coerce")
-                    if "actual_date" in df.columns:
-                        df["actual_date"] = pd.to_datetime(df["actual_date"], errors="coerce")
+                    for col in ["prediction_date", "target_date", "actual_date"]:
+                        if col in df.columns:
+                            df[col] = pd.to_datetime(df[col], errors="coerce")
 
                     return df
+
             except Exception as e:
                 print("load_evaluation error:", e)
 
@@ -273,6 +307,7 @@ def load_evaluation() -> pd.DataFrame:
 def load_local_price(code: str) -> pd.DataFrame:
     code = normalize_code(code)
     path = PRICE_DIR / f"{code}.csv"
+
     if not path.exists():
         return pd.DataFrame()
 
@@ -287,7 +322,9 @@ def load_local_price(code: str) -> pd.DataFrame:
 
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df = df.dropna(subset=["Date"]).copy()
+
         return df
+
     except Exception:
         return pd.DataFrame()
 
@@ -329,6 +366,7 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
         df = df.dropna(subset=["Date"]).copy()
 
         return df
+
     except Exception as e:
         print("Yahoo fetch error:", e)
         return pd.DataFrame()
@@ -341,6 +379,7 @@ def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
         return local_df, "Cached CSV"
 
     live_df = fetch_live_price(ticker)
+
     if not live_df.empty and len(live_df) >= 80:
         return live_df, "Yahoo Finance"
 
@@ -355,6 +394,7 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
         return pd.DataFrame()
 
     df = price_df.copy()
+
     required = ["Date", "Close", "Volume"]
     if not all(col in df.columns for col in required):
         return pd.DataFrame()
@@ -366,8 +406,10 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
+
     avg_gain = gain.rolling(14).mean()
     avg_loss = loss.rolling(14).mean()
+
     rs = avg_gain / avg_loss.replace(0, pd.NA)
     df["RSI14"] = 100 - (100 / (1 + rs))
 
@@ -400,6 +442,7 @@ def build_features(price_df: pd.DataFrame, industry_score: float) -> pd.DataFram
 
     df = df.replace([float("inf"), float("-inf")], pd.NA)
     df = df.dropna().reset_index(drop=True)
+
     return df
 
 
@@ -408,12 +451,15 @@ def get_prediction_row(pred_df: pd.DataFrame, code: str):
         return None
 
     code = normalize_code(code)
+
     temp_df = pred_df.copy()
     temp_df["code"] = temp_df["code"].apply(normalize_code)
 
     row = temp_df[temp_df["code"] == code]
+
     if row.empty:
         return None
+
     return row.iloc[0]
 
 
@@ -467,6 +513,7 @@ def build_accuracy_summary(eval_df: pd.DataFrame):
 
             if not last_7.empty:
                 last_7_acc = last_7["direction_correct"].mean() * 100
+
             if not last_30.empty:
                 last_30_acc = last_30["direction_correct"].mean() * 100
 
@@ -573,11 +620,13 @@ def trade_signal_info(prob_up, pred_return, close_price, ma20, ma60):
         return {
             "label": "NO DATA",
             "class_name": "signal-neutral",
-            "reason": "No prediction data available."
+            "reason": "No prediction data available.",
         }
 
     trend_up = (
-        close_price is not None and ma20 is not None and ma60 is not None
+        close_price is not None
+        and ma20 is not None
+        and ma60 is not None
         and not pd.isna(close_price)
         and not pd.isna(ma20)
         and not pd.isna(ma60)
@@ -586,39 +635,40 @@ def trade_signal_info(prob_up, pred_return, close_price, ma20, ma60):
     )
 
     above_ma20 = (
-        close_price is not None and ma20 is not None
+        close_price is not None
+        and ma20 is not None
         and not pd.isna(close_price)
         and not pd.isna(ma20)
         and close_price > ma20
     )
 
-    prob_ok = (prob_up is not None and not pd.isna(prob_up) and prob_up >= 0.55)
+    prob_ok = prob_up is not None and not pd.isna(prob_up) and prob_up >= 0.55
 
     if pred_return >= 0.03 and trend_up and prob_ok:
         return {
             "label": "🔥 STRONG BUY",
             "class_name": "signal-bull",
-            "reason": "Predicted return > 3%, trend is strong (Close > MA20 > MA60), and probability supports entry."
+            "reason": "Predicted return > 3%, trend is strong (Close > MA20 > MA60), and probability supports entry.",
         }
 
     if pred_return >= 0.02 and trend_up:
         return {
             "label": "✅ BUY",
             "class_name": "signal-bull",
-            "reason": "Predicted return > 2% and trend filter passes (Close > MA20 > MA60)."
+            "reason": "Predicted return > 2% and trend filter passes (Close > MA20 > MA60).",
         }
 
     if pred_return >= 0.015 and above_ma20:
         return {
             "label": "👀 WATCH",
             "class_name": "signal-neutral",
-            "reason": "Predicted return is decent, but trend strength is not fully confirmed yet."
+            "reason": "Predicted return is decent, but trend strength is not fully confirmed yet.",
         }
 
     return {
         "label": "⛔ NO BUY",
         "class_name": "signal-bear",
-        "reason": "Predicted return is too low or trend filter does not pass."
+        "reason": "Predicted return is too low or trend filter does not pass.",
     }
 
 
@@ -654,6 +704,7 @@ def add_pin(code: str, available_codes: list[str]):
 def remove_pin(code: str):
     if code in st.session_state.pinned_codes:
         st.session_state.pinned_codes.remove(code)
+
         if not st.session_state.pinned_codes:
             st.session_state.pinned_codes = []
 
@@ -705,9 +756,11 @@ def main():
         + stock_df["industry"].astype(str)
         + ")"
     )
+
     code_to_label = dict(zip(stock_df["code"], stock_df["label"]))
 
     st.sidebar.markdown("### 自訂置頂股票 | Custom Pins")
+
     pin_to_add = st.sidebar.selectbox(
         "新增置頂股票 | Add Pin",
         options=available_codes,
@@ -716,6 +769,7 @@ def main():
     )
 
     c1, c2 = st.sidebar.columns(2)
+
     with c1:
         if st.button("加入置頂 | Add Pin", use_container_width=True):
             add_pin(pin_to_add, available_codes)
@@ -726,8 +780,10 @@ def main():
         if st.button("重設置頂 | Reset Pins", use_container_width=True):
             default_pins = ["2330", "2454", "2408", "6669"]
             st.session_state.pinned_codes = [c for c in default_pins if c in available_codes]
+
             if st.session_state.pinned_codes:
                 st.session_state.selected_code = st.session_state.pinned_codes[0]
+
             st.rerun()
 
     if debug_mode:
@@ -753,10 +809,16 @@ def main():
             st.write("Top candidates loaded:", len(top_df))
             st.write("Prediction history rows:", len(history_df))
             st.write("Evaluation rows:", len(eval_df))
+
             if not pred_df.empty and "code" in pred_df.columns:
                 st.write("Prediction codes sample:", pred_df["code"].head(20).tolist())
 
+            if not eval_df.empty:
+                st.write("Evaluation columns:", eval_df.columns.tolist())
+                st.write("Evaluation head:", eval_df.head())
+
     last_update_text = "N/A"
+
     if DAILY_ALL_PATH.exists():
         ts = datetime.fromtimestamp(DAILY_ALL_PATH.stat().st_mtime)
         last_update_text = ts.strftime("%Y-%m-%d %H:%M")
@@ -781,6 +843,7 @@ def main():
         st.metric("置頂數量 | Pinned", len(st.session_state.pinned_codes))
 
     st.markdown("### 📊 真實預測表現 | Real-World Prediction Accuracy")
+
     a1, a2, a3, a4 = st.columns(4)
     a1.metric("Direction Accuracy", fmt_pct_plain(acc_summary["direction_acc"]))
     a2.metric("MAE", fmt_num_plain(acc_summary["mae"]))
@@ -811,11 +874,14 @@ def main():
                 "abs_error": "絕對誤差 Abs Error",
                 "pct_error": "百分比誤差 Pct Error",
             }
+
             keep_cols = [c for c in rename_eval.keys() if c in show_eval.columns]
             show_eval = show_eval[keep_cols].rename(columns=rename_eval)
 
             if "百分比誤差 Pct Error" in show_eval.columns:
-                show_eval["百分比誤差 Pct Error"] = (show_eval["百分比誤差 Pct Error"] * 100).round(2).astype(str) + "%"
+                show_eval["百分比誤差 Pct Error"] = (
+                    show_eval["百分比誤差 Pct Error"] * 100
+                ).round(2).astype(str) + "%"
 
             st.dataframe(
                 show_eval.sort_values(by="目標日期 Target Date", ascending=False),
@@ -824,8 +890,21 @@ def main():
             )
 
     st.markdown("### 🔥 今日推薦 | Top Picks")
+
     if not top_df.empty:
-        show_cols = [c for c in ["code", "name", "industry", "signal", "prob_up", "pred_return", "pred_price"] if c in top_df.columns]
+        show_cols = [
+            c for c in [
+                "code",
+                "name",
+                "industry",
+                "signal",
+                "prob_up",
+                "pred_return",
+                "pred_price",
+            ]
+            if c in top_df.columns
+        ]
+
         show_df = top_df[show_cols].copy()
 
         rename_map = {
@@ -837,22 +916,33 @@ def main():
             "pred_return": "預測報酬 Pred Return",
             "pred_price": "預期收盤價 Expected Next Close",
         }
+
         show_df = show_df.rename(columns=rename_map)
 
         if "上漲機率 Up Prob" in show_df.columns:
-            show_df["上漲機率 Up Prob"] = (show_df["上漲機率 Up Prob"] * 100).round(2).astype(str) + "%"
+            show_df["上漲機率 Up Prob"] = (
+                show_df["上漲機率 Up Prob"] * 100
+            ).round(2).astype(str) + "%"
+
         if "預測報酬 Pred Return" in show_df.columns:
-            show_df["預測報酬 Pred Return"] = (show_df["預測報酬 Pred Return"] * 100).round(2).astype(str) + "%"
+            show_df["預測報酬 Pred Return"] = (
+                show_df["預測報酬 Pred Return"] * 100
+            ).round(2).astype(str) + "%"
+
         if "預期收盤價 Expected Next Close" in show_df.columns:
-            show_df["預期收盤價 Expected Next Close"] = show_df["預期收盤價 Expected Next Close"].round(2)
+            show_df["預期收盤價 Expected Next Close"] = show_df[
+                "預期收盤價 Expected Next Close"
+            ].round(2)
 
         st.dataframe(show_df.head(10), use_container_width=True, hide_index=True)
+
     else:
         st.info("目前沒有 top_candidates.csv 可顯示。 | No cached top candidates found.")
 
     st.markdown("### ⭐ 置頂個股 | Pinned Stocks")
 
     pinned_codes = [c for c in st.session_state.pinned_codes if c in available_codes]
+
     if not pinned_codes:
         pinned_codes = [default_code]
         st.session_state.pinned_codes = pinned_codes
@@ -885,23 +975,28 @@ def main():
                     f'<div class="{signal_class(prob)}">訊號 | Signal: {signal}</div>',
                     unsafe_allow_html=True,
                 )
+
             else:
                 st.caption(f"產業 | Industry: {row['industry']}")
 
             if latest_eval is not None:
                 if "direction_correct" in latest_eval:
                     st.caption(f"最新方向是否正確 | Last Direction Correct: {int(latest_eval['direction_correct'])}")
+
                 if "abs_error" in latest_eval:
                     st.caption(f"最新誤差 | Last Abs Error: {fmt_num_plain(latest_eval['abs_error'])}")
 
             _, remove_col = st.columns([3, 2])
+
             with remove_col:
                 if st.button("取消置頂", key=f"remove_pin_{code}", use_container_width=True):
                     remove_pin(code)
+
                     if st.session_state.selected_code == code and st.session_state.pinned_codes:
                         st.session_state.selected_code = st.session_state.pinned_codes[0]
                     elif st.session_state.selected_code == code:
                         st.session_state.selected_code = default_code
+
                     st.rerun()
 
             if st.session_state.selected_code == code:
@@ -912,6 +1007,7 @@ def main():
     st.markdown("### 🔎 個股分析 | Stock Analysis")
 
     current_code = st.session_state.selected_code
+
     selected_code = st.selectbox(
         "選擇股票 | Select Stock",
         options=available_codes,
@@ -943,6 +1039,7 @@ def main():
         return
 
     feature_df = build_features(price_df, weight)
+
     if feature_df.empty:
         st.error(f"無法建立 {code} 的特徵。 | Could not build features for {code}.")
         return
@@ -958,8 +1055,10 @@ def main():
     if pred_row is not None:
         if "prob_up" in pred_row:
             prob_up = float(pred_row["prob_up"])
+
         if "pred_return" in pred_row:
             pred_return = float(pred_row["pred_return"])
+
         if "pred_price" in pred_row:
             pred_price = float(pred_row["pred_price"])
 
@@ -975,13 +1074,16 @@ def main():
         f"#### {code} - {row['name']} | {row['industry']}",
         unsafe_allow_html=False,
     )
+
     st.markdown(
         f'<div class="{trade_signal["class_name"]}">交易訊號 | Trading Signal: {trade_signal["label"]}</div>',
         unsafe_allow_html=True,
     )
+
     st.caption(f"Signal Reason: {trade_signal['reason']}")
 
     _, pin_col = st.columns([5, 1])
+
     with pin_col:
         if code not in st.session_state.pinned_codes:
             if st.button("加入置頂股票", use_container_width=True):
@@ -989,12 +1091,14 @@ def main():
                 st.rerun()
 
     m1, m2, m3, m4 = st.columns(4)
+
     m1.metric("收盤價 | Close", f"{latest['Close']:.2f}")
     m2.metric("20日均線 | MA20", f"{latest['MA20']:.2f}")
     m3.metric("60日均線 | MA60", f"{latest['MA60']:.2f}")
     m4.metric("RSI 指標 | RSI", f"{latest['RSI14']:.1f}")
 
     m5, m6, m7, m8 = st.columns(4)
+
     m5.metric("上漲機率 | Up Probability", fmt_pct(prob_up))
     m6.metric("預測報酬 | Predicted Return", fmt_pct(pred_return))
     m7.metric("預期收盤價 | Expected Next Close", fmt_num(pred_price))
@@ -1006,14 +1110,33 @@ def main():
     )
 
     st.markdown("### 🧪 該股票真實預測結果 | Real Prediction Result for This Stock")
+
     if latest_eval is None:
         st.info("這支股票目前還沒有已完成的 evaluation 資料。")
     else:
         e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Predicted Close", fmt_num_plain(latest_eval["predicted_close"]) if "predicted_close" in latest_eval else "N/A")
-        e2.metric("Actual Close", fmt_num_plain(latest_eval["actual_close"]) if "actual_close" in latest_eval else "N/A")
-        e3.metric("Abs Error", fmt_num_plain(latest_eval["abs_error"]) if "abs_error" in latest_eval else "N/A")
-        e4.metric("Direction Correct", str(int(latest_eval["direction_correct"])) if "direction_correct" in latest_eval and not pd.isna(latest_eval["direction_correct"]) else "N/A")
+
+        e1.metric(
+            "Predicted Close",
+            fmt_num_plain(latest_eval["predicted_close"]) if "predicted_close" in latest_eval else "N/A",
+        )
+
+        e2.metric(
+            "Actual Close",
+            fmt_num_plain(latest_eval["actual_close"]) if "actual_close" in latest_eval else "N/A",
+        )
+
+        e3.metric(
+            "Abs Error",
+            fmt_num_plain(latest_eval["abs_error"]) if "abs_error" in latest_eval else "N/A",
+        )
+
+        e4.metric(
+            "Direction Correct",
+            str(int(latest_eval["direction_correct"]))
+            if "direction_correct" in latest_eval and not pd.isna(latest_eval["direction_correct"])
+            else "N/A",
+        )
 
         if "predicted_direction" in latest_eval and "actual_direction" in latest_eval:
             st.caption(
@@ -1023,6 +1146,7 @@ def main():
 
     if not history_df.empty and "code" in history_df.columns:
         stock_history = history_df[history_df["code"] == code].copy()
+
         if not stock_history.empty:
             with st.expander("查看這支股票的歷史預測 | View Prediction History For This Stock", expanded=False):
                 show_hist_cols = [
@@ -1034,8 +1158,10 @@ def main():
                         "predicted_close",
                         "predicted_return",
                         "predicted_direction",
-                    ] if c in stock_history.columns
+                    ]
+                    if c in stock_history.columns
                 ]
+
                 show_hist = stock_history[show_hist_cols].copy()
 
                 rename_hist = {
@@ -1047,10 +1173,13 @@ def main():
                     "predicted_return": "預測報酬 Predicted Return",
                     "predicted_direction": "預測方向 Predicted Direction",
                 }
+
                 show_hist = show_hist.rename(columns=rename_hist)
 
                 if "預測報酬 Predicted Return" in show_hist.columns:
-                    show_hist["預測報酬 Predicted Return"] = (show_hist["預測報酬 Predicted Return"] * 100).round(2).astype(str) + "%"
+                    show_hist["預測報酬 Predicted Return"] = (
+                        show_hist["預測報酬 Predicted Return"] * 100
+                    ).round(2).astype(str) + "%"
 
                 st.dataframe(
                     show_hist.sort_values(by="目標日期 Target Date", ascending=False),
@@ -1058,12 +1187,14 @@ def main():
                     hide_index=True,
                 )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "價格圖表 | Price",
-        "成長動能 | Growth",
-        "RSI 分析 | RSI",
-        "指標解釋 | Indicator Guide",
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "價格圖表 | Price",
+            "成長動能 | Growth",
+            "RSI 分析 | RSI",
+            "指標解釋 | Indicator Guide",
+        ]
+    )
 
     with tab1:
         st.plotly_chart(plot_price(feature_df), use_container_width=True)
@@ -1089,6 +1220,7 @@ def main():
 
         st.markdown("**怎麼一起看**")
         st.write("如果股價在 MA20 和 MA60 之上，且 RSI 在 50 以上，通常代表趨勢偏強；如果跌破均線且 RSI 偏低，通常代表動能較弱。")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
 
