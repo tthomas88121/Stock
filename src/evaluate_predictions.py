@@ -1,17 +1,16 @@
 from pathlib import Path
 import pandas as pd
 import yfinance as yf
-from config import DATA_DIR
+
+from config import DATA_DIR, OUTPUT_DIR
 
 
 PREDICTION_HISTORY_PATH = DATA_DIR / "predictions_history.csv"
 EVALUATION_PATH = DATA_DIR / "prediction_evaluation.csv"
+OUTPUT_EVALUATION_PATH = OUTPUT_DIR / "prediction_evaluation.csv"
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Support both old lowercase format and new title-case format.
-    """
     rename_map = {
         "prediction_date": "Prediction Date",
         "target_date": "Target Date",
@@ -27,18 +26,10 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         "abs_error": "Abs Error",
         "pct_error": "Pct Error",
     }
-
-    df = df.rename(columns=rename_map)
-    return df
+    return df.rename(columns=rename_map)
 
 
 def get_actual_close(symbol, target_date):
-    """
-    Get actual close for the target date from Yahoo Finance.
-
-    If target date is a weekend/holiday and no row exists, this returns None.
-    That row will be evaluated later after real market data exists.
-    """
     target_dt = pd.to_datetime(target_date)
     start_dt = target_dt - pd.Timedelta(days=2)
     end_dt = target_dt + pd.Timedelta(days=3)
@@ -63,7 +54,7 @@ def get_actual_close(symbol, target_date):
         df = df.reset_index()
 
         if "Date" not in df.columns or "Close" not in df.columns:
-            print(f"[SKIP] Missing Date/Close columns for {symbol}")
+            print(f"[SKIP] Missing Date/Close for {symbol}")
             return None, None
 
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
@@ -73,7 +64,7 @@ def get_actual_close(symbol, target_date):
         row = df[df["Date"] == target_date_obj]
 
         if row.empty:
-            print(f"[SKIP] {symbol} has no data for target date {target_date}")
+            print(f"[SKIP] {symbol} no data for {target_date}")
             return None, None
 
         actual_close = float(row["Close"].iloc[0])
@@ -88,7 +79,7 @@ def get_actual_close(symbol, target_date):
 
 def evaluate_predictions():
     if not PREDICTION_HISTORY_PATH.exists():
-        print("No predictions history found.")
+        print(f"No predictions history found: {PREDICTION_HISTORY_PATH}")
         return
 
     predictions_df = pd.read_csv(PREDICTION_HISTORY_PATH)
@@ -107,31 +98,52 @@ def evaluate_predictions():
         "Pred Dir",
     ]
 
-    missing_cols = [c for c in required_cols if c not in predictions_df.columns]
-    if missing_cols:
-        print(f"Missing columns in predictions_history.csv: {missing_cols}")
+    missing = [c for c in required_cols if c not in predictions_df.columns]
+    if missing:
+        print(f"Missing columns in predictions_history.csv: {missing}")
         return
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     if EVALUATION_PATH.exists():
-        eval_df_old = pd.read_csv(EVALUATION_PATH)
-        eval_df_old = normalize_columns(eval_df_old)
+        old_eval_df = pd.read_csv(EVALUATION_PATH)
+        old_eval_df = normalize_columns(old_eval_df)
+    elif OUTPUT_EVALUATION_PATH.exists():
+        old_eval_df = pd.read_csv(OUTPUT_EVALUATION_PATH)
+        old_eval_df = normalize_columns(old_eval_df)
     else:
-        eval_df_old = pd.DataFrame()
+        old_eval_df = pd.DataFrame()
+
+    predictions_df["Prediction Date"] = pd.to_datetime(
+        predictions_df["Prediction Date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+
+    predictions_df["Target Date"] = pd.to_datetime(
+        predictions_df["Target Date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
 
     existing_keys = set()
-    if not eval_df_old.empty:
-        if "Symbol" in eval_df_old.columns and "Target Date" in eval_df_old.columns:
-            eval_df_old["Target Date"] = pd.to_datetime(eval_df_old["Target Date"]).dt.strftime("%Y-%m-%d")
-            existing_keys = set(zip(eval_df_old["Symbol"], eval_df_old["Target Date"]))
+    if not old_eval_df.empty and "Symbol" in old_eval_df.columns and "Target Date" in old_eval_df.columns:
+        old_eval_df["Prediction Date"] = pd.to_datetime(
+            old_eval_df["Prediction Date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
 
-    predictions_df["Prediction Date"] = pd.to_datetime(predictions_df["Prediction Date"]).dt.strftime("%Y-%m-%d")
-    predictions_df["Target Date"] = pd.to_datetime(predictions_df["Target Date"]).dt.strftime("%Y-%m-%d")
+        old_eval_df["Target Date"] = pd.to_datetime(
+            old_eval_df["Target Date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+
+        existing_keys = set(
+            zip(
+                old_eval_df["Prediction Date"],
+                old_eval_df["Target Date"],
+                old_eval_df["Symbol"],
+            )
+        )
 
     pending_df = predictions_df[
         ~predictions_df.apply(
-            lambda r: (r["Symbol"], r["Target Date"]) in existing_keys,
+            lambda r: (r["Prediction Date"], r["Target Date"], r["Symbol"]) in existing_keys,
             axis=1,
         )
     ].copy()
@@ -142,7 +154,7 @@ def evaluate_predictions():
 
     print(f"Pending rows to evaluate: {len(pending_df)}")
 
-    new_eval_rows = []
+    new_rows = []
 
     for idx, (_, row) in enumerate(pending_df.iterrows(), start=1):
         symbol = row["Symbol"]
@@ -161,17 +173,16 @@ def evaluate_predictions():
         pred_return = (pred_close - today_close) / today_close if today_close != 0 else 0.0
         actual_return = (actual_close - today_close) / today_close if today_close != 0 else 0.0
 
-        pred_dir = row.get("Pred Dir")
+        pred_dir = row["Pred Dir"]
         if pd.isna(pred_dir) or pred_dir == "":
             pred_dir = "UP" if pred_close >= today_close else "DOWN"
 
         actual_dir = "UP" if actual_close >= today_close else "DOWN"
-        direction_correct = int(pred_dir == actual_dir)
 
         abs_error = abs(pred_close - actual_close)
         pct_error = abs_error / actual_close if actual_close != 0 else None
 
-        new_eval_rows.append(
+        new_rows.append(
             {
                 "Prediction Date": row["Prediction Date"],
                 "Target Date": target_date,
@@ -184,25 +195,30 @@ def evaluate_predictions():
                 "Actual Return": actual_return,
                 "Pred Dir": pred_dir,
                 "Actual Dir": actual_dir,
-                "Direction Correct": direction_correct,
+                "Direction Correct": int(pred_dir == actual_dir),
                 "Abs Error": abs_error,
                 "Pct Error": pct_error,
             }
         )
 
-    if not new_eval_rows:
+    if not new_rows:
         print("No new predictions could be evaluated.")
         return
 
-    new_eval_df = pd.DataFrame(new_eval_rows)
+    new_eval_df = pd.DataFrame(new_rows)
 
-    if eval_df_old.empty:
+    if old_eval_df.empty:
         final_eval_df = new_eval_df
     else:
-        final_eval_df = pd.concat([eval_df_old, new_eval_df], ignore_index=True)
+        final_eval_df = pd.concat([old_eval_df, new_eval_df], ignore_index=True)
 
-    final_eval_df["Prediction Date"] = pd.to_datetime(final_eval_df["Prediction Date"]).dt.strftime("%Y-%m-%d")
-    final_eval_df["Target Date"] = pd.to_datetime(final_eval_df["Target Date"]).dt.strftime("%Y-%m-%d")
+    final_eval_df["Prediction Date"] = pd.to_datetime(
+        final_eval_df["Prediction Date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+
+    final_eval_df["Target Date"] = pd.to_datetime(
+        final_eval_df["Target Date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
 
     final_eval_df = final_eval_df.drop_duplicates(
         subset=["Prediction Date", "Target Date", "Symbol"],
@@ -215,8 +231,10 @@ def evaluate_predictions():
     ).reset_index(drop=True)
 
     final_eval_df.to_csv(EVALUATION_PATH, index=False, encoding="utf-8-sig")
+    final_eval_df.to_csv(OUTPUT_EVALUATION_PATH, index=False, encoding="utf-8-sig")
 
     print(f"Saved evaluation to {EVALUATION_PATH}")
+    print(f"Also saved evaluation to {OUTPUT_EVALUATION_PATH}")
     print(f"Total evaluated rows: {len(final_eval_df)}")
     print(final_eval_df.tail())
 
