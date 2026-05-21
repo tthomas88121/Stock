@@ -1,3 +1,4 @@
+
 from pathlib import Path
 
 import pandas as pd
@@ -70,6 +71,7 @@ def download_recent_data(ticker: str) -> pd.DataFrame:
         df = df.dropna(subset=["Date"]).copy()
 
         return df
+
     except Exception as e:
         print(f"[ERROR] download {ticker}: {e}")
         return pd.DataFrame()
@@ -97,8 +99,10 @@ def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFram
                 old_df = old_df.dropna(subset=["Date"]).copy()
 
             merged = pd.concat([old_df, recent_df], ignore_index=True)
+
         except Exception:
             merged = recent_df.copy()
+
     else:
         merged = recent_df.copy()
 
@@ -113,6 +117,7 @@ def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFram
 
     save_df = merged.copy()
     save_df["Date"] = save_df["Date"].dt.strftime("%Y-%m-%d")
+
     save_df.to_csv(path, index=False, encoding="utf-8-sig")
 
     return merged
@@ -120,6 +125,7 @@ def merge_and_save_price_data(code: str, recent_df: pd.DataFrame) -> pd.DataFram
 
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
+
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
@@ -127,7 +133,9 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.rolling(period).mean()
 
     rs = avg_gain / avg_loss.replace(0, pd.NA)
+
     rsi = 100 - (100 / (1 + rs))
+
     return rsi
 
 
@@ -136,58 +144,180 @@ def build_features_for_one_stock(
     meta_row: pd.Series,
     include_targets: bool = True,
 ) -> pd.DataFrame:
+
     if price_df is None or not isinstance(price_df, pd.DataFrame) or price_df.empty:
         return pd.DataFrame()
 
     required_input_cols = ["Date", "Close", "Volume"]
-    missing_input_cols = [col for col in required_input_cols if col not in price_df.columns]
+
+    missing_input_cols = [
+        col for col in required_input_cols
+        if col not in price_df.columns
+    ]
+
     if missing_input_cols:
         return pd.DataFrame()
 
     df = price_df.copy()
+
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"]).copy()
 
+    # =========================
+    # Moving Averages
+    # =========================
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA20"] = df["Close"].rolling(20).mean()
     df["MA60"] = df["Close"].rolling(60).mean()
 
+    # =========================
+    # RSI / Returns
+    # =========================
     df["RSI14"] = calculate_rsi(df["Close"], 14)
+
     df["Return"] = df["Close"].pct_change()
     df["Vol_Change"] = df["Volume"].pct_change()
-    df["Volatility20"] = df["Return"].rolling(20).std()
 
+    df["Volatility20"] = (
+        df["Return"]
+        .rolling(20)
+        .std()
+    )
+
+    # =========================
+    # Trend Features
+    # =========================
     df["MA20_slope"] = df["MA20"].diff()
     df["MA60_slope"] = df["MA60"].diff()
+
     df["Price_Trend_5d"] = df["Close"].pct_change(5)
     df["Price_Trend_10d"] = df["Close"].pct_change(10)
+
     df["RSI_Trend"] = df["RSI14"].diff()
 
+    # =========================
+    # Industry Feature
+    # =========================
     industry_score = 1.0
     df["IndustryScore"] = industry_score
 
-    # keep these extra features so training and prediction stay compatible
+    # =========================
+    # Extra Return Features
+    # =========================
     df["Return_1d"] = df["Close"].pct_change(1)
     df["Return_3d"] = df["Close"].pct_change(3)
     df["Return_5d"] = df["Close"].pct_change(5)
     df["Return_10d"] = df["Close"].pct_change(10)
 
+    # =========================
+    # Volatility Features
+    # =========================
     daily_ret = df["Close"].pct_change()
+
     df["Vol_5d"] = daily_ret.rolling(5).std()
     df["Vol_10d"] = daily_ret.rolling(10).std()
 
-    df["MA20_gap"] = (df["Close"] - df["MA20"]) / df["MA20"].replace(0, pd.NA)
-    df["MA60_gap"] = (df["Close"] - df["MA60"]) / df["MA60"].replace(0, pd.NA)
+    # =========================
+    # Gap Features
+    # =========================
+    df["MA20_gap"] = (
+        (df["Close"] - df["MA20"])
+        / df["MA20"].replace(0, pd.NA)
+    )
 
+    df["MA60_gap"] = (
+        (df["Close"] - df["MA60"])
+        / df["MA60"].replace(0, pd.NA)
+    )
+
+    # =========================
+    # Volume Features
+    # =========================
     volume_ma20 = df["Volume"].rolling(20).mean()
-    df["Volume_ratio"] = df["Volume"] / volume_ma20.replace(0, pd.NA)
 
+    df["Volume_ratio"] = (
+        df["Volume"]
+        / volume_ma20.replace(0, pd.NA)
+    )
+
+    # =========================
+    # NEW MOMENTUM FEATURES
+    # =========================
+    df["Momentum_20d"] = (
+        df["Close"]
+        / df["Close"].shift(20)
+        - 1
+    )
+
+    df["Momentum_60d"] = (
+        df["Close"]
+        / df["Close"].shift(60)
+        - 1
+    )
+
+    df["Volume_Momentum"] = (
+        df["Volume"]
+        / df["Volume"].rolling(20).mean().replace(0, pd.NA)
+    )
+
+    # =========================
+    # Breakout Features
+    # =========================
+    rolling_high_20 = df["Close"].rolling(20).max()
+    rolling_high_60 = df["Close"].rolling(60).max()
+
+    df["High_20d"] = (
+        df["Close"]
+        / rolling_high_20.replace(0, pd.NA)
+    )
+
+    df["High_60d"] = (
+        df["Close"]
+        / rolling_high_60.replace(0, pd.NA)
+    )
+
+    df["Breakout_20d"] = (
+        df["Close"] >= rolling_high_20
+    ).astype(int)
+
+    df["Breakout_60d"] = (
+        df["Close"] >= rolling_high_60
+    ).astype(int)
+
+    # =========================
+    # Relative Strength Features
+    # =========================
+    df["MA20_MA60_Ratio"] = (
+        df["MA20"]
+        / df["MA60"].replace(0, pd.NA)
+    )
+
+    df["Close_MA20_Ratio"] = (
+        df["Close"]
+        / df["MA20"].replace(0, pd.NA)
+    )
+
+    df["Close_MA60_Ratio"] = (
+        df["Close"]
+        / df["MA60"].replace(0, pd.NA)
+    )
+
+    # =========================
+    # Prediction Targets
+    # =========================
     if include_targets:
-        df["Target"] = (df["Close"].shift(-1) > df["Close"]).astype(int)
-        df["Target_Return"] = (
-            (df["Close"].shift(-1) - df["Close"]) / df["Close"]
-        ).clip(-0.10, 0.10)
+        df["Target"] = (
+            df["Close"].shift(-1) > df["Close"]
+        ).astype(int)
 
+        df["Target_Return"] = (
+            (df["Close"].shift(-1) - df["Close"])
+            / df["Close"]
+        ).clip(-0.20, 0.20)
+
+    # =========================
+    # Meta Info
+    # =========================
     df["code"] = str(meta_row["code"])
     df["name"] = meta_row.get("name", "")
     df["market"] = meta_row.get("market", "")
@@ -221,12 +351,28 @@ def build_features_for_one_stock(
         "MA20_gap",
         "MA60_gap",
         "Volume_ratio",
+
+        # NEW FEATURES
+        "Momentum_20d",
+        "Momentum_60d",
+        "Volume_Momentum",
+        "High_20d",
+        "High_60d",
+        "Breakout_20d",
+        "Breakout_60d",
+        "MA20_MA60_Ratio",
+        "Close_MA20_Ratio",
+        "Close_MA60_Ratio",
     ]
 
     if include_targets:
-        required_cols.extend(["Target", "Target_Return"])
+        required_cols.extend([
+            "Target",
+            "Target_Return",
+        ])
 
     df = df.dropna(subset=required_cols).reset_index(drop=True)
+
     return df
 
 
@@ -235,6 +381,7 @@ def build_merged_dataset(stock_df: pd.DataFrame) -> pd.DataFrame | None:
 
     for _, row in stock_df.iterrows():
         code = normalize_code(row["code"])
+
         price_path = PRICE_DIR / f"{code}.csv"
 
         if not price_path.exists():
@@ -243,7 +390,12 @@ def build_merged_dataset(stock_df: pd.DataFrame) -> pd.DataFrame | None:
 
         try:
             price_df = pd.read_csv(price_path)
-            feature_df = build_features_for_one_stock(price_df, row, include_targets=True)
+
+            feature_df = build_features_for_one_stock(
+                price_df,
+                row,
+                include_targets=True,
+            )
 
             if feature_df.empty:
                 print(f"[SKIP] Empty features for {code}")
@@ -260,18 +412,27 @@ def build_merged_dataset(stock_df: pd.DataFrame) -> pd.DataFrame | None:
         return None
 
     merged_df = pd.concat(all_frames, ignore_index=True)
+
     MERGED_DATASET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    merged_df.to_csv(MERGED_DATASET_PATH, index=False, encoding="utf-8-sig")
+
+    merged_df.to_csv(
+        MERGED_DATASET_PATH,
+        index=False,
+        encoding="utf-8-sig",
+    )
 
     print(f"Saved merged dataset -> {MERGED_DATASET_PATH}")
+
     return merged_df
 
 
 def main():
     ensure_directories()
+
     stock_df = load_stock_list()
 
     total = len(stock_df)
+
     print(f"Updating price data for {total} stocks...")
 
     for idx, (_, row) in enumerate(stock_df.iterrows(), start=1):
@@ -282,6 +443,7 @@ def main():
         print(f"[{idx}/{total}] Updating {code} {name}")
 
         recent_df = download_recent_data(ticker)
+
         if recent_df.empty:
             print(f"[SKIP] Download failed: {ticker}")
             continue
@@ -289,11 +451,14 @@ def main():
         try:
             merge_and_save_price_data(code, recent_df)
             print(f"[OK] Saved price data for {code}")
+
         except Exception as e:
             print(f"[ERROR] save price {code}: {e}")
 
     print("\nRebuilding merged dataset...")
+
     build_merged_dataset(stock_df)
+
     print("Daily update finished.")
 
 
