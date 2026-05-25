@@ -7,16 +7,22 @@ SRC_DIR = BASE_DIR / "src"
 DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 PRICE_DIR = DATA_DIR / "price"
+PROCESSED_DIR = DATA_DIR / "processed"
 OUTPUT_DIR = BASE_DIR / "outputs"
 
-# backward-compatible aliases for older files
-PROCESSED_DIR = DATA_DIR
-
 STOCK_LIST_PATH = BASE_DIR / "stock_list.csv"
-MERGED_DATASET_PATH = DATA_DIR / "merged_dataset.csv"
 
-MODEL_PATH = BASE_DIR / "random_forest_model.pkl"
-REG_MODEL_PATH = BASE_DIR / "random_forest_regressor.pkl"
+MERGED_DATASET_PATH = (
+    PROCESSED_DIR / "merged_dataset.csv"
+)
+
+MODEL_PATH = (
+    BASE_DIR / "random_forest_model.pkl"
+)
+
+REG_MODEL_PATH = (
+    BASE_DIR / "random_forest_regressor.pkl"
+)
 
 FEATURE_COLUMNS = [
     "MA5",
@@ -43,7 +49,6 @@ FEATURE_COLUMNS = [
     "Volume_ratio",
 ]
 
-# default industry weights / scores
 INDUSTRY_SCORE_MAP = {
     "Semiconductor": 1.2,
     "Electronics": 1.1,
@@ -63,11 +68,33 @@ INDUSTRY_SCORE_MAP = {
     "Others": 1.0,
 }
 
+
 def ensure_directories():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    PRICE_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    RAW_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    PRICE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    PROCESSED_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
 
 def get_stock_list_path() -> Path:
     candidates = [
@@ -75,7 +102,9 @@ def get_stock_list_path() -> Path:
         RAW_DIR / "stock_list.csv",
         STOCK_LIST_PATH,
     ]
+
     for path in candidates:
         if path.exists():
             return path
+
     return candidates[0]
