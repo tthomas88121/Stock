@@ -33,9 +33,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily price update
+      - name: Run daily price update and build dataset
         run: |
           python src/daily_update.py
+
+      - name: Check generated data files before training
+        run: |
+          echo "Checking generated dataset..."
+          find data -maxdepth 4 -type f | sort || true
 
       - name: Retrain models
         run: |
@@ -51,22 +56,31 @@ jobs:
 
       - name: Debug output files
         run: |
-          echo "CSV and model files:"
-          find . -maxdepth 4 -type f \( -name "*.csv" -o -name "*.json" -o -name "*.pkl" \) | sort
+          echo "CSV, JSON, and model files:"
+          find . -maxdepth 4 -type f \( -name "*.csv" -o -name "*.json" -o -name "*.pkl" -o -name "*.joblib" \) | sort
           echo "Outputs folder:"
           ls -lah outputs || true
           echo "Data folder:"
           ls -lah data || true
+          echo "Processed data folder:"
+          ls -lah data/processed || true
+          echo "Models folder:"
+          ls -lah models || true
 
       - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add outputs/*.csv || true
+          git add data/processed/merged_dataset.csv || true
+          git add data/cleaned_dataset.csv || true
+          git add data/feature_importance.csv || true
+          git add data/training_features.json || true
+          git add data/model_metrics.json || true
           git add data/predictions_history.csv || true
           git add data/prediction_evaluation.csv || true
-          git add data/*.json || true
+          git add outputs/*.csv || true
+          git add models/*.pkl || true
           git add *.pkl || true
 
           git status

@@ -54,10 +54,11 @@ def train_model():
 
     if not dataset_path.exists():
         raise FileNotFoundError(
-            f"Dataset not found: {MERGED_DATASET_PATH}"
+            f"Dataset not found: {dataset_path}"
         )
 
     print("Loading dataset...")
+    print(f"Dataset path: {dataset_path}")
 
     df = pd.read_csv(dataset_path)
 
@@ -78,14 +79,10 @@ def train_model():
 
     if missing_base:
         print("Current columns:", df.columns.tolist())
-
         raise ValueError(
             f"Missing required base columns: {missing_base}"
         )
 
-    # =========================
-    # Active Features
-    # =========================
     active_features = [
         col for col in FEATURE_COLUMNS
         if col in df.columns
@@ -108,9 +105,6 @@ def train_model():
             "Too few usable features found."
         )
 
-    # =========================
-    # Clean numeric
-    # =========================
     df = df.replace(
         [np.inf, -np.inf],
         np.nan,
@@ -150,9 +144,6 @@ def train_model():
             "Dataset became empty after dropna()."
         )
 
-    # =========================
-    # Wider clipping
-    # =========================
     df["Target_Return"] = (
         df["Target_Return"]
         .clip(-0.20, 0.20)
@@ -160,11 +151,7 @@ def train_model():
 
     print(f"\nClean shape: {df.shape}")
 
-    # =========================
-    # Save cleaned dataset
-    # =========================
     output_dir = Path("data")
-
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -180,9 +167,6 @@ def train_model():
 
     print(f"Saved cleaned dataset -> {cleaned_path}")
 
-    # =========================
-    # Time-based split
-    # =========================
     split = int(len(df) * 0.8)
 
     train_df = df.iloc[:split].copy()
@@ -211,19 +195,9 @@ def train_model():
         .copy()
     )
 
-    y_train_reg = (
-        train_df["Target_Return"]
-        .copy()
-    )
+    y_train_reg = train_df["Target_Return"].copy()
+    y_test_reg = test_df["Target_Return"].copy()
 
-    y_test_reg = (
-        test_df["Target_Return"]
-        .copy()
-    )
-
-    # =========================
-    # XGBoost Classifier
-    # =========================
     print("\nTraining XGBoost classifier...")
 
     clf = XGBClassifier(
@@ -242,9 +216,6 @@ def train_model():
         y_train_cls,
     )
 
-    # =========================
-    # XGBoost Regressor
-    # =========================
     print("\nTraining XGBoost regressor...")
 
     reg = XGBRegressor(
@@ -262,9 +233,6 @@ def train_model():
         y_train_reg,
     )
 
-    # =========================
-    # Evaluation
-    # =========================
     print("\n===== Training Evaluation =====")
 
     y_pred_cls = clf.predict(X_test)
@@ -300,9 +268,6 @@ def train_model():
     print(f"Return MAE: {mae:.6f}")
     print(f"Return RMSE: {rmse:.6f}")
 
-    # =========================
-    # Feature Importance
-    # =========================
     print("\n===== Top Feature Importance =====")
 
     importance_df = pd.DataFrame(
@@ -319,10 +284,7 @@ def train_model():
 
     print(importance_df.head(20))
 
-    importance_path = (
-        output_dir
-        / "feature_importance.csv"
-    )
+    importance_path = output_dir / "feature_importance.csv"
 
     importance_df.to_csv(
         importance_path,
@@ -330,9 +292,6 @@ def train_model():
         encoding="utf-8-sig",
     )
 
-    # =========================
-    # Save models
-    # =========================
     Path(MODEL_PATH).parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -353,46 +312,33 @@ def train_model():
         REG_MODEL_PATH,
     )
 
-    # =========================
-    # Save feature list
-    # =========================
     with open(
         TRAIN_FEATURES_PATH,
         "w",
         encoding="utf-8",
     ) as f:
-
         json.dump(
             active_features,
             f,
             indent=2,
         )
 
-    # =========================
-    # Metrics
-    # =========================
     metrics = {
         "train_time_sec": round(
             time.time() - start_time,
             2,
         ),
-
         "classifier_accuracy": float(acc),
         "classifier_precision": float(prec),
-
         "regression_mae": float(mae),
         "regression_rmse": float(rmse),
-
         "rows_used": int(len(df)),
         "train_rows": int(len(train_df)),
         "test_rows": int(len(test_df)),
-
         "trained_at": pd.Timestamp.now().strftime(
             "%Y-%m-%d %H:%M:%S"
         ),
-
         "active_features": active_features,
-
         "missing_features_skipped": missing_features,
     }
 
@@ -401,7 +347,6 @@ def train_model():
         "w",
         encoding="utf-8",
     ) as f:
-
         json.dump(
             metrics,
             f,
@@ -410,22 +355,10 @@ def train_model():
 
     print(f"\nSaved classifier -> {MODEL_PATH}")
     print(f"Saved regressor -> {REG_MODEL_PATH}")
-
-    print(
-        f"Saved training feature list -> {TRAIN_FEATURES_PATH}"
-    )
-
-    print(
-        f"Saved metrics -> {MODEL_METRICS_PATH}"
-    )
-
-    print(
-        f"Saved feature importance -> {importance_path}"
-    )
-
-    print(
-        f"\nTotal time: {time.time() - start_time:.2f} sec"
-    )
+    print(f"Saved training feature list -> {TRAIN_FEATURES_PATH}")
+    print(f"Saved metrics -> {MODEL_METRICS_PATH}")
+    print(f"Saved feature importance -> {importance_path}")
+    print(f"\nTotal time: {time.time() - start_time:.2f} sec")
 
 
 if __name__ == "__main__":
