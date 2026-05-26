@@ -656,6 +656,7 @@
 4155,4155.TW,download_failed
 4164,4164.TW,download_failed
 4169,4169.TW,download_failed
+4178,4178.TW,download_failed
 4190,4190.TW,download_failed
 4306,4306.TW,download_failed
 4414,4414.TW,download_failed
@@ -944,7 +945,9 @@
 7736,7736.TW,download_failed
 7749,7749.TW,download_failed
 7750,7750.TW,download_failed
+7760,7760.TW,download_failed
 7765,7765.TW,download_failed
+7768,7768.TW,download_failed
 7769,7769.TW,download_failed
 7780,7780.TW,download_failed
 7786,7786.TW,download_failed
@@ -952,6 +955,7 @@
 7791,7791.TW,download_failed
 7795,7795.TW,download_failed
 7799,7799.TW,download_failed
+7818,7818.TW,download_failed
 7821,7821.TW,download_failed
 7822,7822.TW,download_failed
 8011,8011.TW,download_failed
@@ -1051,6 +1055,8 @@
 2258,2258.TW,download_failed
 2432,2432.TW,download_failed
 3150,3150.TW,download_failed
+4195,4195.TW,download_failed
+4582,4582.TW,download_failed
 4590,4590.TW,download_failed
 6534,6534.TW,download_failed
 6645,6645.TW,download_failed
@@ -1068,6 +1074,7 @@
 7631,7631.TW,download_failed
 7730,7730.TW,download_failed
 7740,7740.TW,download_failed
+7803,7803.TW,download_failed
 7823,7823.TW,download_failed
 8162,8162.TW,download_failed
 8487,8487.TW,download_failed
@@ -1253,6 +1260,7 @@
 3479,3479.TWO,download_failed
 3483,3483.TWO,download_failed
 3484,3484.TWO,download_failed
+3485,3485.TWO,download_failed
 3489,3489.TWO,download_failed
 3490,3490.TWO,download_failed
 3491,3491.TWO,download_failed
@@ -1812,6 +1820,7 @@
 6968,6968.TWO,download_failed
 6971,6971.TWO,download_failed
 6982,6982.TWO,download_failed
+6983,6983.TWO,download_failed
 6996,6996.TWO,download_failed
 6997,6997.TWO,download_failed
 7402,7402.TWO,download_failed
@@ -1842,6 +1851,7 @@
 7757,7757.TWO,download_failed
 7767,7767.TWO,download_failed
 7770,7770.TWO,download_failed
+7772,7772.TWO,download_failed
 7777,7777.TWO,download_failed
 7782,7782.TWO,download_failed
 7792,7792.TWO,download_failed
@@ -1849,6 +1859,9 @@
 7805,7805.TWO,download_failed
 7810,7810.TWO,download_failed
 7811,7811.TWO,download_failed
+7820,7820.TWO,download_failed
+7828,7828.TWO,download_failed
+7842,7842.TWO,download_failed
 8024,8024.TWO,download_failed
 8027,8027.TWO,download_failed
 8032,8032.TWO,download_failed
