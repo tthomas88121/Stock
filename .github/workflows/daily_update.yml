@@ -33,55 +33,79 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily price update and build dataset
+      # ==========================================
+      # Daily Update
+      # ==========================================
+      - name: Run daily price update
         run: |
           python src/daily_update.py
 
-      - name: Check generated data files before training
+      # ==========================================
+      # Verify dataset
+      # ==========================================
+      - name: Verify merged dataset exists
         run: |
-          echo "Checking generated dataset..."
-          find data -maxdepth 4 -type f | sort || true
+          echo "Checking dataset folders..."
 
+          echo "===== data ====="
+          ls -lah data || true
+
+          echo "===== data/processed ====="
+          ls -lah data/processed || true
+
+          echo "===== search merged dataset ====="
+          find data -name "merged_dataset.csv" || true
+
+          if [ ! -f data/processed/merged_dataset.csv ]; then
+            echo "ERROR: merged_dataset.csv not found!"
+            exit 1
+          fi
+
+          echo "merged_dataset.csv found successfully."
+
+      # ==========================================
+      # Train Model
+      # ==========================================
       - name: Retrain models
         run: |
           python src/model_train.py
 
+      # ==========================================
+      # Predict
+      # ==========================================
       - name: Generate predictions
         run: |
           python src/predict.py
 
+      # ==========================================
+      # Evaluate
+      # ==========================================
       - name: Evaluate predictions
         run: |
           python src/evaluate_predictions.py
 
+      # ==========================================
+      # Debug output
+      # ==========================================
       - name: Debug output files
         run: |
-          echo "CSV, JSON, and model files:"
-          find . -maxdepth 4 -type f \( -name "*.csv" -o -name "*.json" -o -name "*.pkl" -o -name "*.joblib" \) | sort
-          echo "Outputs folder:"
-          ls -lah outputs || true
-          echo "Data folder:"
-          ls -lah data || true
-          echo "Processed data folder:"
-          ls -lah data/processed || true
-          echo "Models folder:"
-          ls -lah models || true
+          echo "CSV / JSON / PKL files:"
+          find . -maxdepth 5 -type f \( -name "*.csv" -o -name "*.json" -o -name "*.pkl" -o -name "*.joblib" \) | sort
 
+      # ==========================================
+      # Commit results
+      # ==========================================
       - name: Commit updated files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add data/processed/merged_dataset.csv || true
-          git add data/cleaned_dataset.csv || true
-          git add data/feature_importance.csv || true
-          git add data/training_features.json || true
-          git add data/model_metrics.json || true
-          git add data/predictions_history.csv || true
-          git add data/prediction_evaluation.csv || true
+          git add data/processed/*.csv || true
+          git add data/*.csv || true
+          git add data/*.json || true
           git add outputs/*.csv || true
-          git add models/*.pkl || true
           git add *.pkl || true
+          git add models/*.pkl || true
 
           git status
 
