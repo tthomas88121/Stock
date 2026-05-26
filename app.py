@@ -373,15 +373,18 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
 
 
 def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
+    live_df = fetch_live_price(ticker)
+
+    if not live_df.empty and len(live_df) >= 80:
+        return live_df, "Yahoo Finance"
+
     local_df = load_local_price(code)
 
     if not local_df.empty and len(local_df) >= 80:
         return local_df, "Cached CSV"
 
-    live_df = fetch_live_price(ticker)
-
-    if not live_df.empty and len(live_df) >= 80:
-        return live_df, "Yahoo Finance"
+    if not live_df.empty:
+        return live_df, "Yahoo Finance (fallback)"
 
     if not local_df.empty:
         return local_df, "Cached CSV (fallback)"

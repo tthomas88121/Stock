@@ -16,14 +16,14 @@ def main():
     train_model_main()
 
     print("\n===================================")
-    print("STEP 3: Generating predictions")
-    print("===================================")
-    predict_main(top_n=10)
-
-    print("\n===================================")
-    print("STEP 4: Evaluating old predictions")
+    print("STEP 3: Evaluating old predictions")
     print("===================================")
     evaluate_predictions()
+
+    print("\n===================================")
+    print("STEP 4: Generating new predictions")
+    print("===================================")
+    predict_main(top_n=10)
 
     print("\n===================================")
     print("Daily pipeline completed.")

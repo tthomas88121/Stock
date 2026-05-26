@@ -66,6 +66,20 @@ def train_model():
 
     df = normalize_base_columns(df)
 
+    # =========================================
+    # Use recent data only + sort by date
+    # =========================================
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+        cutoff = df["Date"].max() - pd.Timedelta(days=365)
+
+        df = df[df["Date"] >= cutoff].copy()
+
+        df = df.sort_values("Date").reset_index(drop=True)
+
+        print(f"Recent 1-year shape: {df.shape}")
+
     required_base = [
         "Close",
         "Target",
@@ -201,11 +215,11 @@ def train_model():
     print("\nTraining XGBoost classifier...")
 
     clf = XGBClassifier(
-        n_estimators=500,
-        max_depth=8,
+        n_estimators=250,
+        max_depth=4,
         learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
+        subsample=0.8,
+        colsample_bytree=0.8,
         random_state=42,
         n_jobs=-1,
         eval_metric="logloss",
@@ -219,11 +233,11 @@ def train_model():
     print("\nTraining XGBoost regressor...")
 
     reg = XGBRegressor(
-        n_estimators=500,
-        max_depth=8,
+        n_estimators=250,
+        max_depth=4,
         learning_rate=0.03,
-        subsample=0.85,
-        colsample_bytree=0.85,
+        subsample=0.8,
+        colsample_bytree=0.8,
         random_state=42,
         n_jobs=-1,
     )
@@ -361,5 +375,9 @@ def train_model():
     print(f"\nTotal time: {time.time() - start_time:.2f} sec")
 
 
-if __name__ == "__main__":
+def main():
     train_model()
+
+
+if __name__ == "__main__":
+    main()

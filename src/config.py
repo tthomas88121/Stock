@@ -1,7 +1,7 @@
 from pathlib import Path
 
 # config.py is inside src/, so parent.parent = project root
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent   
 SRC_DIR = BASE_DIR / "src"
 
 DATA_DIR = BASE_DIR / "data"

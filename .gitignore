@@ -1,17 +1,54 @@
+# =========================================
+# Python
+# =========================================
 __pycache__/
 *.pyc
 .venv/
-.vscode/
 .env
 
-data/
-models/
-outputs/
-
+# =========================================
+# Models
+# =========================================
 *.pkl
 *.joblib
-*.csv
 
+# =========================================
+# Large generated stock data
+# =========================================
+data/price/
+data/processed/
+data/raw/
+
+# Generated datasets
+data/cleaned_dataset.csv
+data/feature_importance.csv
+data/merged_dataset.csv
+
+# Temporary src data
+src/data/
+
+# =========================================
+# Jupyter / notebooks
+# =========================================
+.ipynb_checkpoints/
+notebooks/
+
+# =========================================
+# VSCode
+# =========================================
+.vscode/
+
+# =========================================
+# KEEP IMPORTANT TRACKING FILES
+# =========================================
+!data/predictions_history.csv
+!data/prediction_evaluation.csv
+!data/model_metrics.json
+!data/training_features.json
+
+# Keep outputs
 !outputs/
 !outputs/*.csv
+
+# Keep stock list
 !stock_list.csv
