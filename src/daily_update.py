@@ -101,8 +101,6 @@ def download_recent_data(
                 f"[WARN] Missing columns for {ticker}: {missing}"
             )
 
-            print(df.columns.tolist())
-
             return pd.DataFrame()
 
         df["Date"] = pd.to_datetime(
@@ -242,7 +240,6 @@ def calculate_rsi(
 def build_features_for_one_stock(
     price_df: pd.DataFrame,
     meta_row: pd.Series,
-    include_targets: bool = True,
 ) -> pd.DataFrame:
 
     if (
@@ -277,23 +274,9 @@ def build_features_for_one_stock(
         subset=["Date"]
     ).copy()
 
-    df["MA5"] = (
-        df["Close"]
-        .rolling(5)
-        .mean()
-    )
-
-    df["MA20"] = (
-        df["Close"]
-        .rolling(20)
-        .mean()
-    )
-
-    df["MA60"] = (
-        df["Close"]
-        .rolling(60)
-        .mean()
-    )
+    df["MA5"] = df["Close"].rolling(5).mean()
+    df["MA20"] = df["Close"].rolling(20).mean()
+    df["MA60"] = df["Close"].rolling(60).mean()
 
     df["RSI14"] = calculate_rsi(
         df["Close"],
@@ -385,20 +368,18 @@ def build_features_for_one_stock(
         / volume_ma20.replace(0, pd.NA)
     )
 
-    if include_targets:
+    df["Target"] = (
+        df["Close"].shift(-1)
+        > df["Close"]
+    ).astype(int)
 
-        df["Target"] = (
+    df["Target_Return"] = (
+        (
             df["Close"].shift(-1)
-            > df["Close"]
-        ).astype(int)
-
-        df["Target_Return"] = (
-            (
-                df["Close"].shift(-1)
-                - df["Close"]
-            )
-            / df["Close"]
-        ).clip(-0.20, 0.20)
+            - df["Close"]
+        )
+        / df["Close"]
+    ).clip(-0.20, 0.20)
 
     df["code"] = str(
         meta_row["code"]
@@ -409,28 +390,12 @@ def build_features_for_one_stock(
         "",
     )
 
-    df["market"] = meta_row.get(
-        "market",
-        "",
-    )
-
-    df["industry"] = meta_row.get(
-        "industry",
-        "",
-    )
-
-    df["ticker"] = meta_row.get(
-        "ticker",
-        "",
-    )
-
     df = df.replace(
         [float("inf"), float("-inf")],
         pd.NA,
     )
 
     required_cols = [
-        "Date",
         "Close",
         "MA5",
         "MA20",
@@ -454,13 +419,9 @@ def build_features_for_one_stock(
         "MA20_gap",
         "MA60_gap",
         "Volume_ratio",
+        "Target",
+        "Target_Return",
     ]
-
-    if include_targets:
-        required_cols.extend([
-            "Target",
-            "Target_Return",
-        ])
 
     df = df.dropna(
         subset=required_cols
@@ -500,7 +461,6 @@ def build_merged_dataset(
                 build_features_for_one_stock(
                     price_df,
                     row,
-                    include_targets=True,
                 )
             )
 
@@ -612,16 +572,18 @@ def main():
 
     print("\nRebuilding merged dataset...")
 
-    merged_df = build_merged_dataset(stock_df)
+    merged_df = build_merged_dataset(
+        stock_df
+    )
 
     if merged_df is None or merged_df.empty:
         raise RuntimeError(
-            "Merged dataset was not created. Check feature generation."
+            "Merged dataset was not created."
         )
 
     if not MERGED_DATASET_PATH.exists():
         raise FileNotFoundError(
-            f"Merged dataset missing after build: {MERGED_DATASET_PATH}"
+            f"Missing dataset: {MERGED_DATASET_PATH}"
         )
 
     print(
