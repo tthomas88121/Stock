@@ -609,23 +609,23 @@ def main():
                 f"[ERROR] save price {code}: {e}"
             )
 
-    print("\nRebuilding merged dataset...")
+        print("\nRebuilding merged dataset...")
 
-merged_df = build_merged_dataset(stock_df)
+        merged_df = build_merged_dataset(stock_df)
 
-if merged_df is None or merged_df.empty:
-    raise RuntimeError(
-        "Merged dataset was not created. Check feature generation."
-    )
+        if merged_df is None or merged_df.empty:
+            raise RuntimeError(
+            "Merged dataset was not created. Check feature generation."
+        )
 
-if not MERGED_DATASET_PATH.exists():
-    raise FileNotFoundError(
-        f"Merged dataset missing after build: {MERGED_DATASET_PATH}"
-    )
+        if not MERGED_DATASET_PATH.exists():
+            raise FileNotFoundError(
+            f"Merged dataset missing after build: {MERGED_DATASET_PATH}"
+        )
 
-print(f"Merged dataset rows: {len(merged_df)}")
+    print(f"Merged dataset rows: {len(merged_df)}")
 
-print("Daily update finished.")
+    print("Daily update finished.")
 
 
 if __name__ == "__main__":
