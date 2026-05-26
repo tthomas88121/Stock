@@ -594,9 +594,21 @@ def main():
 
     print("\nRebuilding merged dataset...")
 
-    build_merged_dataset(stock_df)
+merged_df = build_merged_dataset(stock_df)
 
-    print("Daily update finished.")
+if merged_df is None or merged_df.empty:
+    raise RuntimeError(
+        "Merged dataset was not created. Check feature generation."
+    )
+
+if not MERGED_DATASET_PATH.exists():
+    raise FileNotFoundError(
+        f"Merged dataset missing after build: {MERGED_DATASET_PATH}"
+    )
+
+print(f"Merged dataset rows: {len(merged_df)}")
+
+print("Daily update finished.")
 
 
 if __name__ == "__main__":
