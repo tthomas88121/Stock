@@ -63,24 +63,26 @@ def download_recent_data(
     try:
         ticker = normalize_ticker(ticker)
 
-        df = yf.download(
-            ticker,
+        print(f"Downloading {ticker}...")
+
+        stock = yf.Ticker(ticker)
+
+        df = stock.history(
             period="1y",
             interval="1d",
             auto_adjust=True,
-            progress=False,
-            threads=False,
         )
 
         if df is None or df.empty:
+            print(f"[WARN] Empty download: {ticker}")
             return pd.DataFrame()
+
+        df = df.reset_index()
 
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = (
                 df.columns.get_level_values(0)
             )
-
-        df = df.reset_index()
 
         required = [
             "Date",
@@ -88,10 +90,18 @@ def download_recent_data(
             "Volume",
         ]
 
-        if not all(
-            col in df.columns
-            for col in required
-        ):
+        missing = [
+            col for col in required
+            if col not in df.columns
+        ]
+
+        if missing:
+            print(
+                f"[WARN] Missing columns for {ticker}: {missing}"
+            )
+
+            print(df.columns.tolist())
+
             return pd.DataFrame()
 
         df["Date"] = pd.to_datetime(
@@ -103,10 +113,17 @@ def download_recent_data(
             subset=["Date"]
         ).copy()
 
+        print(
+            f"[OK] Downloaded {ticker}: {len(df)} rows"
+        )
+
         return df
 
     except Exception as e:
-        print(f"[ERROR] download {ticker}: {e}")
+
+        print(
+            f"[ERROR] download {ticker}: {type(e).__name__} - {e}"
+        )
 
         return pd.DataFrame()
 
