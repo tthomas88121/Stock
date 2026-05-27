@@ -570,6 +570,27 @@ def build_accuracy_summary(eval_df: pd.DataFrame):
         "last_30_acc": last_30_acc,
     }
 
+def build_price_bias(price_df: pd.DataFrame, window: int):
+    if price_df.empty or "Close" not in price_df.columns:
+        return None
+
+    df = price_df.copy()
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df[f"MA{window}"] = df["Close"].rolling(window).mean()
+
+    df = df.dropna(subset=["Close", f"MA{window}"])
+
+    if df.empty:
+        return None
+
+    latest = df.iloc[-1]
+
+    bias = (
+        (latest["Close"] - latest[f"MA{window}"])
+        / latest[f"MA{window}"]
+    ) * 100
+
+    return bias
 
 def plot_price(df: pd.DataFrame):
     fig = go.Figure()
@@ -1147,6 +1168,49 @@ def main():
     m6.metric("預測報酬 | Predicted Return", fmt_pct(pred_return))
     m7.metric("預期收盤價 | Expected Next Close", fmt_num(pred_price))
     m8.metric("Setup Quality", trading_bias_text(pred_return))
+
+    m8.metric("Setup Quality", trading_bias_text(pred_return))
+
+    # =========================================
+    # Bias Ratio Analysis
+    # =========================================
+
+    st.markdown("### 📐 乖離率分析 | Bias Ratio Analysis")
+
+    bias6 = build_price_bias(price_df, 6)
+    bias12 = build_price_bias(price_df, 12)
+
+    bb1, bb2 = st.columns(2)
+
+    with bb1:
+        st.markdown("#### 正乖離率 | Positive Bias")
+
+        if bias6 is not None:
+            st.metric("6日乖離率 | 6-Day Bias", f"{bias6:.2f}%")
+
+            if bias6 > 3.5:
+                st.warning("股價明顯高於6日均線，短線可能偏熱，追高風險較高。")
+            elif bias6 > 0:
+                st.success("股價高於6日均線，短線偏多。")
+            else:
+                st.info("目前沒有正乖離，股價沒有明顯高於短期均線。")
+        else:
+            st.info("資料不足，無法計算6日乖離率。")
+
+    with bb2:
+        st.markdown("#### 負乖離率 | Negative Bias")
+
+        if bias12 is not None:
+            st.metric("12日乖離率 | 12-Day Bias", f"{bias12:.2f}%")
+
+            if bias12 < -4.5:
+                st.warning("股價明顯低於12日均線，可能有反彈機會，但仍需確認趨勢。")
+            elif bias12 < 0:
+                st.info("股價低於12日均線，短線偏弱。")
+            else:
+                st.success("目前沒有負乖離，股價沒有明顯低於中短期均線。")
+        else:
+            st.info("資料不足，無法計算12日乖離率。")
 
     st.caption(
         f"產業權重 | Industry Weight: {weight:.2f}   •   "
