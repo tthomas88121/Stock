@@ -9,7 +9,7 @@ RAW_DIR = DATA_DIR / "raw"
 PRICE_DIR = DATA_DIR / "price"
 PROCESSED_DIR = DATA_DIR / "processed"
 OUTPUT_DIR = BASE_DIR / "outputs"
-
+LATEST_PRICE_CACHE_PATH = OUTPUT_DIR / "latest_price_cache.csv"
 STOCK_LIST_PATH = BASE_DIR / "stock_list.csv"
 
 MERGED_DATASET_PATH = (

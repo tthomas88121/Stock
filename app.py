@@ -18,6 +18,7 @@ from config import (
     STOCK_LIST_PATH,
     get_stock_list_path,
     OUTPUT_DIR,
+    LATEST_PRICE_CACHE_PATH,
 )
 
 TOP_PATH = OUTPUT_DIR / "top_candidates.csv"
@@ -302,6 +303,38 @@ def load_evaluation() -> pd.DataFrame:
 
     return pd.DataFrame()
 
+@st.cache_data(ttl=900)
+def load_cached_price_from_outputs(code: str) -> pd.DataFrame:
+    code = normalize_code(code)
+
+    if not LATEST_PRICE_CACHE_PATH.exists():
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(LATEST_PRICE_CACHE_PATH)
+
+        if df.empty or "code" not in df.columns:
+            return pd.DataFrame()
+
+        df["code"] = df["code"].apply(normalize_code)
+        df = df[df["code"] == code].copy()
+
+        if df.empty:
+            return pd.DataFrame()
+
+        required = ["Date", "Close", "Volume"]
+
+        if not all(col in df.columns for col in required):
+            return pd.DataFrame()
+
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).copy()
+
+        return df
+
+    except Exception as e:
+        print("load_cached_price_from_outputs error:", e)
+        return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def load_local_price(code: str) -> pd.DataFrame:
@@ -373,21 +406,29 @@ def fetch_live_price(ticker: str) -> pd.DataFrame:
 
 
 def get_best_price_data(code: str, ticker: str) -> tuple[pd.DataFrame, str]:
+    cache_df = load_cached_price_from_outputs(code)
+
+    if not cache_df.empty and len(cache_df) >= 80:
+        return cache_df, "Daily CSV Cache"
+
+    local_df = load_local_price(code)
+
+    if not local_df.empty and len(local_df) >= 80:
+        return local_df, "Local CSV"
+
     live_df = fetch_live_price(ticker)
 
     if not live_df.empty and len(live_df) >= 80:
         return live_df, "Yahoo Finance"
 
-    local_df = load_local_price(code)
+    if not cache_df.empty:
+        return cache_df, "Daily CSV Cache (fallback)"
 
-    if not local_df.empty and len(local_df) >= 80:
-        return local_df, "Cached CSV"
+    if not local_df.empty:
+        return local_df, "Local CSV (fallback)"
 
     if not live_df.empty:
         return live_df, "Yahoo Finance (fallback)"
-
-    if not local_df.empty:
-        return local_df, "Cached CSV (fallback)"
 
     return pd.DataFrame(), "No Data"
 

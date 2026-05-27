@@ -34,46 +34,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ==========================================
-      # Step 1 - Update stock prices
-      # ==========================================
       - name: Daily Update
         run: |
           python src/daily_update.py
 
-      # ==========================================
-      # Step 2 - Train model
-      # ==========================================
       - name: Train Model
         run: |
           python src/model_train.py
 
-      # ==========================================
-      # Step 3 - Evaluate old predictions
-      # ==========================================
       - name: Evaluate Predictions
         run: |
           python src/evaluate_predictions.py
 
-      # ==========================================
-      # Step 4 - Generate new predictions
-      # ==========================================
       - name: Generate Predictions
         run: |
           python src/predict.py
 
-      # ==========================================
-      # Commit updated outputs/data
-      # ==========================================
       - name: Commit updated files
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           git add outputs/*.csv || true
-          git add data/*.csv || true
-          git add data/*.json || true
+          git add data/predictions_history.csv || true
+          git add data/prediction_evaluation.csv || true
+          git add data/model_metrics.json || true
+          git add data/training_features.json || true
+
+          git status
 
           git commit -m "Auto daily stock update" || echo "No changes to commit"
-
-          git push
+          git pull --rebase origin main || true
+          git push origin main

@@ -6,6 +6,8 @@ import yfinance as yf
 from config import (
     PRICE_DIR,
     MERGED_DATASET_PATH,
+    OUTPUT_DIR,
+    LATEST_PRICE_CACHE_PATH,
     get_stock_list_path,
     ensure_directories,
 )
@@ -512,6 +514,54 @@ def build_merged_dataset(
 
     return merged_df
 
+def export_latest_price_cache(stock_df: pd.DataFrame, days: int = 260):
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    cache_frames = []
+
+    for _, row in stock_df.iterrows():
+        code = normalize_code(row["code"])
+        price_path = PRICE_DIR / f"{code}.csv"
+
+        if not price_path.exists():
+            continue
+
+        try:
+            df = pd.read_csv(price_path)
+
+            if df.empty or "Date" not in df.columns:
+                continue
+
+            keep_cols = [c for c in ["Date", "Close", "Volume"] if c in df.columns]
+            df = df[keep_cols].copy()
+
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df = df.dropna(subset=["Date"]).copy()
+            df = df.sort_values("Date").tail(days)
+
+            df["code"] = code
+
+            cache_frames.append(df)
+
+        except Exception as e:
+            print(f"[WARN] cache failed for {code}: {e}")
+
+    if not cache_frames:
+        print("[WARN] No latest price cache generated.")
+        return
+
+    cache_df = pd.concat(cache_frames, ignore_index=True)
+
+    cache_df["Date"] = cache_df["Date"].dt.strftime("%Y-%m-%d")
+
+    cache_df.to_csv(
+        LATEST_PRICE_CACHE_PATH,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    print(f"Saved latest price cache -> {LATEST_PRICE_CACHE_PATH}")
+    print(f"Cache rows: {len(cache_df)}")
 
 def main():
 
@@ -589,6 +639,10 @@ def main():
     print(
         f"Merged dataset rows: {len(merged_df)}"
     )
+
+    print("\nExporting latest price cache for dashboard...")
+
+    export_latest_price_cache(stock_df)
 
     print("Daily update finished.")
 
